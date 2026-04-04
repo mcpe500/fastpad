@@ -125,6 +125,7 @@ void editor_get_selection(Editor *editor, TextPos *out_start, TextPos *out_end) 
 void editor_clear_selection(Editor *editor) {
     editor->selection.start = editor->caret;
     editor->selection.end = editor->caret;
+    InvalidateRect(editor->hwnd, NULL, FALSE);
 }
 
 void editor_select_all(Editor *editor) {
@@ -132,6 +133,7 @@ void editor_select_all(Editor *editor) {
     editor->selection.end = editor->buffer.size;
     editor->caret = editor->buffer.size;
     editor_scroll_to_caret(editor);
+    InvalidateRect(editor->hwnd, NULL, FALSE);
 }
 
 void editor_char_input(Editor *editor, char ch) {

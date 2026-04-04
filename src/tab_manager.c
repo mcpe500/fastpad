@@ -193,6 +193,9 @@ bool tab_manager_switch_tab(TabManager *mgr, int index) {
     // Update tab control selection
     TabCtrl_SetCurSel(mgr->hwnd, index);
     
+    // Set focus to parent window so keyboard input works
+    SetFocus(mgr->parent_hwnd);
+    
     // Update window title
     tab_manager_update_window_title(mgr, mgr->parent_hwnd);
     
@@ -280,7 +283,7 @@ bool tab_manager_has_unsaved_changes(TabManager *mgr) {
 
 bool tab_manager_check_unsaved(TabManager *mgr) {
     bool has_unsaved = false;
-    
+
     // Find tabs with unsaved changes
     for (int i = 0; i < mgr->count; i++) {
         if (mgr->tabs[i].editor.modified) {
@@ -288,35 +291,31 @@ bool tab_manager_check_unsaved(TabManager *mgr) {
             break;
         }
     }
-    
+
     if (!has_unsaved) {
         return true;
     }
-    
+
     int result = MessageBoxA(
         mgr->parent_hwnd,
         "Some tabs have unsaved changes. Save all and exit?",
         "FastPad",
         MB_YESNOCANCEL | MB_ICONQUESTION
     );
-    
+
     if (result == IDYES) {
-        // Save all tabs
+        // Save all tabs WITHOUT switching tabs
+        // Switching during close can cause infinite loops
         for (int i = 0; i < mgr->count; i++) {
-            if (mgr->tabs[i].editor.modified) {
-                // Switch to tab to save
-                tab_manager_switch_tab(mgr, i);
-                
-                if (strcmp(mgr->tabs[i].filename, "Untitled") == 0) {
-                    char filename[MAX_PATH] = {0};
-                    if (!file_save_dialog(mgr->parent_hwnd, filename, MAX_PATH, 
-                                         &mgr->tabs[i].editor.buffer)) {
-                        return false;
-                    }
-                    tab_manager_set_tab_filename(mgr, i, filename);
+            Tab *tab = &mgr->tabs[i];
+            if (tab->editor.modified) {
+                if (strcmp(tab->filename, "Untitled") == 0) {
+                    // Can't show save dialog during close, just return false
+                    // User should save manually before closing
+                    return false;
                 } else {
-                    if (!file_save(mgr->parent_hwnd, mgr->tabs[i].filename, 
-                                  &mgr->tabs[i].editor.buffer)) {
+                    if (!file_save(mgr->parent_hwnd, tab->filename,
+                                  &tab->editor.buffer)) {
                         return false;
                     }
                 }

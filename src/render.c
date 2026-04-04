@@ -96,13 +96,14 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
     extern App g_app;
     int tab_height = g_app.tab_mgr.height;
 
-    // Adjust client rect for tab bar
-    client_rect.top = tab_height;
-
-    // Fill editor background (below tab bar)
+    // Fill ENTIRE client area with white background first
+    // This prevents ghost characters from appearing
     HBRUSH bg_brush = CreateSolidBrush(RGB(255, 255, 255));
     FillRect(hdc, &client_rect, bg_brush);
     DeleteObject(bg_brush);
+
+    // Adjust client rect for tab bar (only draw text below tab bar)
+    client_rect.top = tab_height;
     
     // Calculate visible line range
     int start_line = editor->viewport.scroll_y;
