@@ -505,7 +505,24 @@ void app_on_paint(App *app) {
     
     Tab *tab = tab_manager_get_active(&app->tab_mgr);
     if (tab) {
+        // Save DC state
+        int saved = SaveDC(hdc);
+        
+        // Offset drawing to account for tab bar
+        SetViewportOrgEx(hdc, 0, app->tab_mgr.height, NULL);
+        
+        // Create clipping region for editor area only
+        RECT client_rc;
+        GetClientRect(app->hwnd, &client_rc);
+        RECT editor_rc = client_rc;
+        editor_rc.top = app->tab_mgr.height;
+        IntersectClipRect(hdc, editor_rc.left, editor_rc.top, editor_rc.right, editor_rc.bottom);
+        
+        // Render editor
         render_paint(&tab->editor, hdc, &ps.rcPaint);
+        
+        // Restore DC state
+        RestoreDC(hdc, saved);
     }
     
     app_update_statusbar(app);
@@ -602,9 +619,11 @@ void app_on_lbuttondown(App *app, int x, int y, bool shift) {
     Tab *tab = tab_manager_get_active(&app->tab_mgr);
     if (!tab) return;
     
+    // Check if click is in editor area (below tab bar)
+    if (y < app->tab_mgr.height) return;
+    
     // Adjust y for tab bar
     y -= app->tab_mgr.height;
-    if (y < 0) return;
     
     editor_mouse_click(&tab->editor, x, y, shift);
 }
@@ -613,9 +632,11 @@ void app_on_mousemove(App *app, int x, int y, bool dragging) {
     Tab *tab = tab_manager_get_active(&app->tab_mgr);
     if (!tab) return;
     
+    // Check if mouse is in editor area (below tab bar)
+    if (y < app->tab_mgr.height) return;
+    
     // Adjust y for tab bar
     y -= app->tab_mgr.height;
-    if (y < 0) return;
     
     if (dragging) {
         editor_mouse_drag(&tab->editor, x, y);

@@ -76,22 +76,12 @@ int tab_manager_new_tab(TabManager *mgr) {
     snprintf(tab->filename, sizeof(tab->filename), "Untitled");
     tab->editor.tab_index = index;
     
-    // Create child window for this tab
-    tab->hwnd = CreateWindowExA(
-        0,
-        "STATIC",
-        "",
-        WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
-        0, 0, 0, 0,
-        mgr->parent_hwnd,
-        NULL,
-        NULL,
-        NULL
-    );
+    // Don't create child window - use parent window directly
+    // This ensures keyboard input goes to main window
+    tab->hwnd = mgr->parent_hwnd;
     
     // Initialize editor for this tab
     if (!editor_init(&tab->editor, tab->hwnd)) {
-        DestroyWindow(tab->hwnd);
         return -1;
     }
     
@@ -153,11 +143,8 @@ bool tab_manager_close_tab(TabManager *mgr, int index) {
     // Free editor resources
     editor_free(&tab->editor);
     
-    // Destroy child window
-    if (tab->hwnd) {
-        DestroyWindow(tab->hwnd);
-        tab->hwnd = NULL;
-    }
+    // No child window to destroy (using parent directly)
+    tab->hwnd = NULL;
     
     // Remove from tab control
     TabCtrl_DeleteItem(mgr->hwnd, index);
@@ -197,7 +184,6 @@ bool tab_manager_switch_tab(TabManager *mgr, int index) {
     // Deactivate current tab
     if (mgr->active_index >= 0 && mgr->active_index < mgr->count) {
         mgr->tabs[mgr->active_index].active = false;
-        ShowWindow(mgr->tabs[mgr->active_index].hwnd, SW_HIDE);
     }
     
     // Activate new tab
@@ -207,41 +193,11 @@ bool tab_manager_switch_tab(TabManager *mgr, int index) {
     // Update tab control selection
     TabCtrl_SetCurSel(mgr->hwnd, index);
     
-    // Resize and show the tab's editor area
-    RECT rc;
-    GetClientRect(mgr->parent_hwnd, &rc);
-    
-    // Calculate editor area (subtract tab bar and status bar)
-    int tab_top = mgr->height;
-    int tab_bottom = rc.bottom;
-    
-    // Check if status bar is visible
-    extern App g_app;
-    if (g_app.statusbar && g_app.show_statusbar) {
-        RECT sb_rect;
-        GetWindowRect(g_app.statusbar, &sb_rect);
-        tab_bottom -= (sb_rect.bottom - sb_rect.top);
-    }
-    
-    // Position tab's child window
-    SetWindowPos(mgr->tabs[index].hwnd, NULL,
-                 0, tab_top,
-                 rc.right, tab_bottom - tab_top,
-                 SWP_NOZORDER);
-    
-    ShowWindow(mgr->tabs[index].hwnd, SW_SHOW);
-    SetFocus(mgr->tabs[index].hwnd);
-    
-    // Resize editor
-    RECT editor_rc;
-    GetClientRect(mgr->tabs[index].hwnd, &editor_rc);
-    render_resize(&mgr->tabs[index].editor, editor_rc.right, editor_rc.bottom);
-    
     // Update window title
     tab_manager_update_window_title(mgr, mgr->parent_hwnd);
     
-    // Redraw
-    InvalidateRect(mgr->tabs[index].hwnd, NULL, TRUE);
+    // Redraw entire window
+    InvalidateRect(mgr->parent_hwnd, NULL, TRUE);
     
     return true;
 }
@@ -301,19 +257,15 @@ void tab_manager_resize(TabManager *mgr, int width) {
         int tab_top = mgr->height;
         int editor_height = rc.bottom - tab_top;
         
+        extern App g_app;
         if (g_app.statusbar && g_app.show_statusbar) {
             RECT sb_rect;
             GetWindowRect(g_app.statusbar, &sb_rect);
             editor_height -= (sb_rect.bottom - sb_rect.top);
         }
         
-        SetWindowPos(active->hwnd, NULL,
-                     0, tab_top,
-                     width, editor_height,
-                     SWP_NOZORDER);
-        
         render_resize(&active->editor, width, editor_height);
-        InvalidateRect(active->hwnd, NULL, TRUE);
+        InvalidateRect(mgr->parent_hwnd, NULL, TRUE);
     }
 }
 
