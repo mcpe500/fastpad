@@ -357,21 +357,31 @@ void editor_key_down(Editor *editor, int key) {
                 TextPos start, end;
                 editor_get_selection(editor, &start, &end);
                 
+                // Save deleted text for undo BEFORE deleting
                 char *deleted_text = buffer_get_text(&editor->buffer, start, end);
+                int deleted_length = end - start;
+                
+                buffer_delete(&editor->buffer, start, deleted_length);
+                
                 if (deleted_text) {
-                    int deleted_length = end - start;
                     editor_add_undo_op(editor, OP_DELETE, start, deleted_text, deleted_length);
                     free(deleted_text);
                 }
                 
-                buffer_delete(&editor->buffer, start, end - start);
                 editor->caret = start;
                 editor->selection.start = start;
                 editor->selection.end = start;
             } else if (editor->caret > 0) {
+                // Save character BEFORE deleting from buffer
                 char deleted = buffer_get_char(&editor->buffer, editor->caret - 1);
+                
+                // Delete the character
                 buffer_delete(&editor->buffer, editor->caret - 1, 1);
+                
+                // Add undo (delete operation means we can undo by re-inserting)
                 editor_add_undo_op(editor, OP_DELETE, editor->caret - 1, &deleted, 1);
+                
+                // Move caret back
                 editor->caret--;
                 editor->selection.start = editor->caret;
                 editor->selection.end = editor->caret;
@@ -388,21 +398,31 @@ void editor_key_down(Editor *editor, int key) {
                 TextPos start, end;
                 editor_get_selection(editor, &start, &end);
                 
+                // Save deleted text for undo BEFORE deleting
                 char *deleted_text = buffer_get_text(&editor->buffer, start, end);
+                int deleted_length = end - start;
+                
+                buffer_delete(&editor->buffer, start, deleted_length);
+                
                 if (deleted_text) {
-                    int deleted_length = end - start;
                     editor_add_undo_op(editor, OP_DELETE, start, deleted_text, deleted_length);
                     free(deleted_text);
                 }
                 
-                buffer_delete(&editor->buffer, start, end - start);
+                editor->caret = start;
                 editor->selection.start = start;
                 editor->selection.end = start;
-                editor->caret = start;
             } else if (editor->caret < editor->buffer.size) {
+                // Save character BEFORE deleting from buffer
                 char deleted = buffer_get_char(&editor->buffer, editor->caret);
+                
+                // Delete the character
                 buffer_delete(&editor->buffer, editor->caret, 1);
+                
+                // Add undo
                 editor_add_undo_op(editor, OP_DELETE, editor->caret, &deleted, 1);
+                
+                // Selection stays at caret (doesn't move on delete)
                 editor->selection.start = editor->caret;
                 editor->selection.end = editor->caret;
             }

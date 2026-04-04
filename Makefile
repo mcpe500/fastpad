@@ -19,10 +19,17 @@ SRCS = $(SRCDIR)/main.c \
        $(SRCDIR)/search.c \
        $(SRCDIR)/tab_manager.c
 
+TEST_SRCS = tests/unit_tests.c
+
 all: $(TARGET)
 
 $(TARGET): $(SRCS) | $(BUILDDIR)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@ $(LIBS)
+
+test: $(TEST_SRCS) | $(BUILDDIR)
+	$(CC) -Os -Wall -Wextra -g \
+		$(TEST_SRCS) -o $(BUILDDIR)/test_runner
+	$(BUILDDIR)/test_runner
 
 $(BUILDDIR):
 	mkdir -p $(BUILDDIR)
