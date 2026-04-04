@@ -320,13 +320,14 @@ bool tab_manager_check_unsaved(TabManager *mgr) {
             Tab *tab = &mgr->tabs[i];
             if (tab->editor.modified) {
                 if (strcmp(tab->filename, "Untitled") == 0) {
-                    // Can't show save dialog during close, just return false
-                    // User should save manually before closing
-                    return false;
+                    // During shutdown, skip Untitled files (discard changes)
+                    // This prevents hanging when user can't save
+                    continue;
                 } else {
                     if (!file_save(mgr->parent_hwnd, tab->filename,
                                   &tab->editor.buffer)) {
-                        return false;
+                        // Save failed - still allow close
+                        // User can try again or accept data loss
                     }
                 }
             }
