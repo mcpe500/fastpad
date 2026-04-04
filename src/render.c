@@ -89,12 +89,17 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
     HFONT old_font = (HFONT)SelectObject(hdc, editor->font);
 
     // Get client area
-    // NOTE: app_on_paint() has already set viewport origin to account for tab bar,
-    // so all drawing is automatically offset. No manual adjustment needed here.
     RECT client_rect;
     GetClientRect(editor->hwnd, &client_rect);
 
-    // Fill background
+    // Get tab bar height from global app
+    extern App g_app;
+    int tab_height = g_app.tab_mgr.height;
+
+    // Adjust client rect for tab bar
+    client_rect.top = tab_height;
+
+    // Fill editor background (below tab bar)
     HBRUSH bg_brush = CreateSolidBrush(RGB(255, 255, 255));
     FillRect(hdc, &client_rect, bg_brush);
     DeleteObject(bg_brush);
@@ -110,7 +115,7 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
     
     // Draw each visible line
     for (int line = start_line; line <= end_line; line++) {
-        int y = (line - start_line) * editor->viewport.line_height;
+        int y = tab_height + (line - start_line) * editor->viewport.line_height;
         
         // Get line text
         TextPos line_start = buffer_line_start(&editor->buffer, line);
@@ -175,13 +180,11 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
     }
     
     // Draw caret if window is focused
-    // NOTE: SetCaretPos is already affected by SetViewportOrgEx in app_on_paint(),
-    // so no manual tab_height offset needed here.
     if (GetFocus() == editor->hwnd) {
         LineCol caret_lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
         int caret_line = caret_lc.line - editor->viewport.scroll_y;
         int caret_x = (caret_lc.col - editor->viewport.scroll_x) * editor->viewport.char_width;
-        int caret_y = caret_line * editor->viewport.line_height;
+        int caret_y = tab_height + caret_line * editor->viewport.line_height;
 
         if (caret_line >= 0 && caret_line <= editor->viewport.visible_lines) {
             CreateCaret(editor->hwnd, NULL, 1, editor->viewport.line_height);
