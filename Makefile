@@ -1,7 +1,7 @@
 # FastPad Makefile
-# Cross-compile for Windows using mingw-w64
+# Cross-compile for Windows using llvm-mingw (Termux)
 
-CC = x86_64-w64-mingw32-gcc
+CC = x86_64-w64-mingw32-clang
 CFLAGS = -Os -s -ffunction-sections -fdata-sections -Wall -Wextra
 LDFLAGS = -Wl,--gc-sections -mwindows
 LIBS = -luser32 -lgdi32 -lcomdlg32 -lkernel32 -lshell32

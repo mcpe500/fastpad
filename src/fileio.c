@@ -110,13 +110,13 @@ bool file_load(HWND hwnd, const char *filename, GapBuffer *buffer) {
     
     // Convert CRLF to LF for internal storage
     int lf_count = 0;
-    for (int i = offset; i < bytesRead; i++) {
+    for (DWORD i = offset; i < bytesRead; i++) {
         if (fileData[i] == '\r' && i + 1 < bytesRead && fileData[i+1] == '\n') {
             lf_count++;
         }
     }
     
-    int text_length = bytesRead - offset - lf_count;
+    int text_length = (int)bytesRead - (int)offset - lf_count;
     
     // Initialize buffer with text
     buffer_free(buffer);
@@ -128,7 +128,7 @@ bool file_load(HWND hwnd, const char *filename, GapBuffer *buffer) {
     
     // Copy text with normalized line endings
     int dest_pos = 0;
-    for (int i = offset; i < bytesRead; i++) {
+    for (DWORD i = offset; i < bytesRead; i++) {
         if (fileData[i] == '\r' && i + 1 < bytesRead && fileData[i+1] == '\n') {
             buffer->data[dest_pos++] = '\n';
             i++; // Skip LF

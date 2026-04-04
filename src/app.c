@@ -2,7 +2,9 @@
 #include "editor.h"
 #include "render.h"
 #include "fileio.h"
+#include "buffer.h"
 #include "search.h"
+#include <commctrl.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -470,17 +472,12 @@ void app_on_command(App *app, WPARAM wParam) {
 }
 
 void app_on_size(App *app, int width, int height) {
+    (void)width;
+    (void)height;
+    
     // Resize status bar
     if (app->statusbar) {
         SendMessage(app->statusbar, WM_SIZE, 0, 0);
-    }
-    
-    // Calculate editor area (subtract status bar height)
-    int editor_height = height;
-    if (app->show_statusbar && app->statusbar) {
-        RECT sb_rect;
-        GetWindowRect(app->statusbar, &sb_rect);
-        editor_height -= (sb_rect.bottom - sb_rect.top);
     }
     
     // Resize editor
@@ -511,7 +508,8 @@ void app_on_char(App *app, WPARAM wParam) {
 
 void app_on_keydown(App *app, WPARAM wParam) {
     bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-    
+    bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+
     if (ctrl) {
         switch (wParam) {
             case 'N': // Ctrl+N - New
@@ -520,8 +518,12 @@ void app_on_keydown(App *app, WPARAM wParam) {
             case 'O': // Ctrl+O - Open
                 app_file_open(app);
                 return;
-            case 'S': // Ctrl+S - Save
-                app_file_save(app);
+            case 'S': // Ctrl+S - Save, Ctrl+Shift+S - Save As
+                if (shift) {
+                    app_file_save_as(app);
+                } else {
+                    app_file_save(app);
+                }
                 return;
             case 'F': // Ctrl+F - Find
                 search_show_dialog(app->hwnd, &app->editor);
@@ -561,6 +563,7 @@ void app_on_mousemove(App *app, int x, int y, bool dragging) {
 }
 
 void app_on_lbuttonup(App *app) {
+    (void)app;
     // Selection dragging handled by mouse move
 }
 

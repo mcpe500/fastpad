@@ -83,6 +83,8 @@ static void render_draw_line(HDC hdc, const char *text, int length, int x, int y
 }
 
 void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
+    (void)update_rect;
+    
     // Select font
     HFONT old_font = (HFONT)SelectObject(hdc, editor->font);
     

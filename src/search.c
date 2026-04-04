@@ -48,8 +48,6 @@ TextPos search_find_next(GapBuffer *buffer, TextPos current_pos, const char *tex
         return -1;
     }
     
-    int buffer_len = buffer_length(buffer);
-    
     // Search from current_pos+1 to end, then wrap to beginning
     TextPos pos = search_find(buffer, current_pos + 1, text, match_case);
     
