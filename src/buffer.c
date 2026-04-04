@@ -4,6 +4,7 @@
 
 #define INITIAL_CAPACITY 4096
 #define GROWTH_FACTOR 2
+#define MAX_BUFFER_SIZE (100 * 1024 * 1024) /* 100 MB limit for v1 */
 
 bool buffer_init(GapBuffer *buf, int initial_capacity) {
     if (initial_capacity <= 0) {
@@ -38,10 +39,24 @@ bool buffer_ensure_space(GapBuffer *buf, int needed) {
     if (buf->gap_length >= needed) {
         return true;
     }
-    
+
     // Need to grow buffer
+    // Check for integer overflow before multiplying
+    if (buf->capacity > MAX_BUFFER_SIZE / GROWTH_FACTOR) {
+        // Would overflow or exceed limit
+        return false;
+    }
+
     int new_capacity = buf->capacity * GROWTH_FACTOR;
     while (new_capacity - buf->size < needed) {
+        // Check for overflow before next multiply
+        if (new_capacity > MAX_BUFFER_SIZE / GROWTH_FACTOR) {
+            /* One final step to reach needed */
+            int final_capacity = buf->size + needed + 1024;
+            if (final_capacity > MAX_BUFFER_SIZE) return false;
+            new_capacity = final_capacity;
+            break;
+        }
         new_capacity *= GROWTH_FACTOR;
     }
     
