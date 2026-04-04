@@ -111,6 +111,7 @@ typedef struct {
     HWND statusbar;
     HWND hwnd;
     bool running;
+    bool shutting_down;  // Flag to prevent auto-creating tabs during shutdown
 } App;
 
 // Global app instance

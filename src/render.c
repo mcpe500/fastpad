@@ -63,7 +63,7 @@ void render_calc_metrics(Editor *editor, HDC hdc) {
 void render_resize(Editor *editor, int width, int height) {
     editor->viewport.visible_lines = height / editor->viewport.line_height;
     editor->viewport.visible_cols = width / editor->viewport.char_width;
-    
+
     // Clamp scroll position
     int total_lines = buffer_line_count(&editor->buffer);
     if (editor->viewport.scroll_y + editor->viewport.visible_lines > total_lines) {
@@ -72,14 +72,6 @@ void render_resize(Editor *editor, int width, int height) {
             editor->viewport.scroll_y = 0;
         }
     }
-}
-
-static void render_draw_line(HDC hdc, const char *text, int length, int x, int y, COLORREF color) {
-    SetTextColor(hdc, color);
-    SetBkMode(hdc, TRANSPARENT);
-    
-    // Draw text
-    TextOutA(hdc, x, y, text, length);
 }
 
 void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
@@ -117,66 +109,96 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
     // Draw each visible line
     for (int line = start_line; line <= end_line; line++) {
         int y = tab_height + (line - start_line) * editor->viewport.line_height;
-        
+
         // Get line text
         TextPos line_start = buffer_line_start(&editor->buffer, line);
         TextPos line_end = buffer_line_end(&editor->buffer, line);
         int line_length = line_end - line_start;
-        
+
         char *line_text = buffer_get_text(&editor->buffer, line_start, line_end);
         if (!line_text) {
             continue;
         }
-        
+
         // Calculate selection for this line
         TextPos sel_start = editor->selection.start;
         TextPos sel_end = editor->selection.end;
-        
+
         if (sel_start > sel_end) {
             TextPos temp = sel_start;
             sel_start = sel_end;
             sel_end = temp;
         }
-        
+
+        // Convert selection positions to line columns
+        TextPos abs_line_start = line_start;
+        TextPos abs_line_end = line_end;
+
         bool has_selection = sel_start < sel_end;
-        
-        // Draw selection background if present
+        int sel_start_col = -1;
+        int sel_end_col = -1;
+
         if (has_selection) {
-            LineCol start_lc = buffer_pos_to_linecol(&editor->buffer, sel_start);
-            LineCol end_lc = buffer_pos_to_linecol(&editor->buffer, sel_end);
-            
-            if (start_lc.line <= line && end_lc.line >= line) {
-                int sel_start_col = (start_lc.line == line) ? start_lc.col : 0;
-                int sel_end_col = (end_lc.line == line) ? end_lc.col : line_length;
-                
+            // Check if selection overlaps with this line
+            if (sel_start < abs_line_end && sel_end > abs_line_start) {
+                // Selection overlaps with line
+                sel_start_col = (sel_start > abs_line_start) ? (int)(sel_start - abs_line_start) : 0;
+                sel_end_col = (sel_end < abs_line_end) ? (int)(sel_end - abs_line_start) : line_length;
+
+                // Draw selection background
                 int x1 = (sel_start_col - editor->viewport.scroll_x) * editor->viewport.char_width;
                 int x2 = (sel_end_col - editor->viewport.scroll_x) * editor->viewport.char_width;
-                
-                if (x2 > 0) {
+
+                if (x2 > x1) {
                     RECT sel_rect = {
                         x1,
                         y,
                         x2,
                         y + editor->viewport.line_height
                     };
-                    
+
                     HBRUSH sel_brush = CreateSolidBrush(RGB(0, 120, 215));
                     FillRect(hdc, &sel_rect, sel_brush);
                     DeleteObject(sel_brush);
                 }
             }
         }
-        
-        // Draw text with selection color or normal color
-        COLORREF text_color = has_selection ? RGB(255, 255, 255) : RGB(0, 0, 0);
-        
+
+        // Draw text - split into segments if there's selection
         int x = -editor->viewport.scroll_x * editor->viewport.char_width;
-        
-        // Only draw if line is not empty
+
         if (line_length > 0) {
-            render_draw_line(hdc, line_text, line_length, x, y, text_color);
+            if (has_selection && sel_start_col >= 0 && sel_end_col > sel_start_col) {
+                // Draw 3 segments: before selection, selected, after selection
+                
+                // Segment 1: Before selection (normal black text)
+                if (sel_start_col > 0) {
+                    SetTextColor(hdc, RGB(0, 0, 0));
+                    SetBkMode(hdc, TRANSPARENT);
+                    TextOutA(hdc, x, y, line_text, sel_start_col);
+                }
+                
+                // Segment 2: Selected portion (white text on blue background - already drawn)
+                SetTextColor(hdc, RGB(255, 255, 255));
+                SetBkMode(hdc, TRANSPARENT);
+                int sel_x = x + sel_start_col * editor->viewport.char_width;
+                TextOutA(hdc, sel_x, y, line_text + sel_start_col, sel_end_col - sel_start_col);
+                
+                // Segment 3: After selection (normal black text)
+                if (sel_end_col < line_length) {
+                    SetTextColor(hdc, RGB(0, 0, 0));
+                    SetBkMode(hdc, TRANSPARENT);
+                    int after_x = x + sel_end_col * editor->viewport.char_width;
+                    TextOutA(hdc, after_x, y, line_text + sel_end_col, line_length - sel_end_col);
+                }
+            } else {
+                // No selection on this line - draw normally
+                SetTextColor(hdc, RGB(0, 0, 0));
+                SetBkMode(hdc, TRANSPARENT);
+                TextOutA(hdc, x, y, line_text, line_length);
+            }
         }
-        
+
         free(line_text);
     }
     

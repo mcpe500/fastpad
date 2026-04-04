@@ -47,7 +47,6 @@ FastPad should feel better than a bloated editor because it does less, not becau
 
 FastPad is **not** trying to include:
 
-- tabs
 - plugins
 - syntax highlighting
 - file tree/sidebar
@@ -61,6 +60,8 @@ FastPad is **not** trying to include:
 - extension marketplace
 
 These may be considered later, but are explicitly out of scope for v1.
+
+**Note:** Tab support was added in v1.1 for basic multi-file editing, but advanced tab features remain out of scope.
 
 ## Target Platform
 
@@ -105,6 +106,18 @@ FastPad v1 must support:
 15. **UTF-8 file I/O**
     - internally UTF-8 or UTF-16 is acceptable
     - file format on disk should support UTF-8 cleanly
+
+## Multi-Tab Editing (v1.1+)
+
+FastPad v1.1 added basic multi-tab support:
+
+- **New tab**: Ctrl+T or File > New Tab
+- **Close tab**: Ctrl+W or File > Close Tab
+- **Switch tabs**: Ctrl+Tab / Ctrl+Shift+Tab
+- **Tab bar**: Shows all open tabs at top of editor area
+- **Unsaved changes handling**: Prompts to save all tabs on close
+- **Shared editor surface**: All tabs share the main window's editor surface for simplicity
+- **Proper shutdown**: Clean exit without hanging, even with unsaved changes
 
 ## Nice-to-Have Features
 
@@ -185,6 +198,13 @@ These are targets, not absolute promises.
 ### `search.c`
 - find text
 - next/previous match
+- modeless find dialog with proper focus handling
+
+### `tab_manager.c`
+- tab creation, deletion, and switching
+- tab control (SysTabControl32) management
+- unsaved changes detection across all tabs
+- shutdown-aware tab closing to prevent hangs
 
 ## Text Storage
 
@@ -207,15 +227,25 @@ Requirements for the text buffer:
 Main window contains:
 
 - menu bar
-- editor client area
+- tab bar (shows all open tabs)
+- editor client area (shared by all tabs)
 - optional status bar
 
 No ribbon, no custom chrome, no unnecessary panels.
+
+### Tab Bar Behavior
+
+- Tab bar is positioned at the top of the client area
+- All tabs share the same editor surface (child window per tab is deferred to future versions)
+- Tab switching updates focus, caret, and redraw the editor area
+- Tab bar shows tab titles and allows clicking to switch tabs
 
 ## Menus
 
 ### File
 - New
+- New Tab
+- Close Tab
 - Open
 - Save
 - Save As
@@ -244,6 +274,10 @@ No ribbon, no custom chrome, no unnecessary panels.
 - Ctrl+O = Open
 - Ctrl+S = Save
 - Ctrl+Shift+S = Save As
+- Ctrl+T = New Tab
+- Ctrl+W = Close Tab
+- Ctrl+Tab = Next Tab
+- Ctrl+Shift+Tab = Previous Tab
 - Ctrl+F = Find
 - Ctrl+A = Select All
 - Ctrl+Z = Undo
@@ -302,6 +336,15 @@ No silent data loss.
 - avoid flicker
 - support resize correctly
 - horizontal scrolling may be omitted in v1 if word wrap is enabled by default, but no hidden broken behavior
+
+### Selection Rendering
+
+Selection must be drawn properly to avoid visual artifacts:
+
+- lines are drawn in 3 segments when partially selected: before selection (black), selected portion (white on blue), after selection (black)
+- do NOT draw entire line in white color just because part of it is selected
+- selection background is drawn first, then text on top
+- this prevents ghost characters and ensures text remains readable during selection
 
 ## Code Quality Rules
 

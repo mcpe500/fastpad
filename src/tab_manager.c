@@ -46,11 +46,13 @@ bool tab_manager_init(TabManager *mgr, HWND parent_hwnd) {
 }
 
 void tab_manager_free(TabManager *mgr) {
-    // Close all tabs
-    while (mgr->count > 0) {
-        tab_manager_close_tab(mgr, 0);
+    // Free all tab editor resources directly without prompts or switching
+    for (int i = 0; i < mgr->count; i++) {
+        editor_free(&mgr->tabs[i].editor);
     }
-    
+    mgr->count = 0;
+    mgr->active_index = -1;
+
     if (mgr->hwnd) {
         DestroyWindow(mgr->hwnd);
         mgr->hwnd = NULL;
@@ -106,21 +108,21 @@ int tab_manager_new_tab(TabManager *mgr) {
     return index;
 }
 
-bool tab_manager_close_tab(TabManager *mgr, int index) {
+bool tab_manager_close_tab(TabManager *mgr, int index, bool is_shutting_down) {
     if (index < 0 || index >= mgr->count) {
         return false;
     }
-    
+
     Tab *tab = &mgr->tabs[index];
-    
-    // Check for unsaved changes
-    if (tab->editor.modified) {
+
+    // Check for unsaved changes (skip during shutdown)
+    if (!is_shutting_down && tab->editor.modified) {
         char msg[512];
         snprintf(msg, sizeof(msg), "Save changes to \"%s\"?", tab->title);
-        
-        int result = MessageBoxA(mgr->parent_hwnd, msg, "FastPad", 
+
+        int result = MessageBoxA(mgr->parent_hwnd, msg, "FastPad",
                                 MB_YESNOCANCEL | MB_ICONQUESTION);
-        
+
         if (result == IDYES) {
             // Save before closing
             if (strcmp(tab->filename, "Untitled") == 0) {
@@ -130,7 +132,7 @@ bool tab_manager_close_tab(TabManager *mgr, int index) {
                 }
                 tab_manager_set_tab_filename(mgr, index, filename);
             }
-            
+
             if (!file_save(mgr->parent_hwnd, tab->filename, &tab->editor.buffer)) {
                 return false; // Save failed
             }
@@ -139,40 +141,42 @@ bool tab_manager_close_tab(TabManager *mgr, int index) {
         }
         // IDNO: Don't save, just close
     }
-    
+
     // Free editor resources
     editor_free(&tab->editor);
-    
+
     // No child window to destroy (using parent directly)
     tab->hwnd = NULL;
-    
+
     // Remove from tab control
     TabCtrl_DeleteItem(mgr->hwnd, index);
-    
+
     // Shift remaining tabs
     for (int i = index + 1; i < mgr->count; i++) {
         mgr->tabs[i - 1] = mgr->tabs[i];
         mgr->tabs[i - 1].editor.tab_index = i - 1;
     }
-    
+
     mgr->count--;
-    
+
     // Adjust active index
     if (mgr->active_index >= mgr->count) {
         mgr->active_index = mgr->count - 1;
     }
-    
-    // If no tabs left, create a new one
+
+    // If no tabs left, create a new one (only if not shutting down)
     if (mgr->count == 0) {
-        tab_manager_new_tab(mgr);
+        if (!is_shutting_down) {
+            tab_manager_new_tab(mgr);
+        }
         return true;
     }
-    
+
     // Switch to the tab that replaced the closed one
     if (mgr->active_index >= 0) {
         tab_manager_switch_tab(mgr, mgr->active_index);
     }
-    
+
     return true;
 }
 
@@ -180,28 +184,34 @@ bool tab_manager_switch_tab(TabManager *mgr, int index) {
     if (index < 0 || index >= mgr->count) {
         return false;
     }
-    
+
     // Deactivate current tab
     if (mgr->active_index >= 0 && mgr->active_index < mgr->count) {
         mgr->tabs[mgr->active_index].active = false;
     }
-    
+
     // Activate new tab
     mgr->active_index = index;
     mgr->tabs[index].active = true;
-    
+
     // Update tab control selection
     TabCtrl_SetCurSel(mgr->hwnd, index);
-    
+
     // Set focus to parent window so keyboard input works
     SetFocus(mgr->parent_hwnd);
-    
+
+    // Hide caret during switch to prevent stale positioning
+    HideCaret(mgr->parent_hwnd);
+
     // Update window title
     tab_manager_update_window_title(mgr, mgr->parent_hwnd);
-    
-    // Redraw entire window
+
+    // Update status bar
+    tab_manager_update_statusbar(mgr);
+
+    // Redraw entire window to ensure clean state
     InvalidateRect(mgr->parent_hwnd, NULL, TRUE);
-    
+
     return true;
 }
 

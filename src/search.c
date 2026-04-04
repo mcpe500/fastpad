@@ -136,7 +136,8 @@ static LRESULT CALLBACK FindSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
                         g_find_editor->selection.end = pos + (int)strlen(g_find_text);
                         editor_scroll_to_caret(g_find_editor);
                         InvalidateRect(g_find_editor->hwnd, NULL, FALSE);
-                        SetFocus(g_find_edit);
+                        // Return focus to parent/editor, not the find dialog
+                        SetFocus(g_find_parent);
                     } else {
                         MessageBoxA(hwnd, "Text not found.", "Find", MB_ICONINFORMATION);
                     }
@@ -154,6 +155,10 @@ static LRESULT CALLBACK FindSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
             return 0;
             
         case WM_DESTROY:
+            // Restore focus to parent window
+            if (g_find_parent) {
+                SetFocus(g_find_parent);
+            }
             g_find_dialog = NULL;
             g_find_editor = NULL;
             return 0;

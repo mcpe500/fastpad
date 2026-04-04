@@ -154,13 +154,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
             
         case WM_CLOSE: {
-            if (app_check_unsaved(app)) {
+            if (tab_manager_check_unsaved(&app->tab_mgr)) {
+                app->shutting_down = true;
                 DestroyWindow(hwnd);
             }
-            break;
+            return 0;
         }
-            
+
         case WM_DESTROY: {
+            // Don't close tabs one-by-one, just free resources directly
             tab_manager_free(&app->tab_mgr);
             PostQuitMessage(0);
             break;
@@ -412,7 +414,7 @@ void app_on_command(App *app, WPARAM wParam) {
             
         case ID_FILE_CLOSE_TAB:
             if (app->tab_mgr.count > 1) {
-                tab_manager_close_tab(&app->tab_mgr, app->tab_mgr.active_index);
+                tab_manager_close_tab(&app->tab_mgr, app->tab_mgr.active_index, app->shutting_down);
             } else {
                 // Last tab - just clear it
                 app_file_new(app);
@@ -543,7 +545,7 @@ void app_on_keydown(App *app, WPARAM wParam) {
                 return;
             case 'W': // Ctrl+W - Close Tab
                 if (app->tab_mgr.count > 1) {
-                    tab_manager_close_tab(&app->tab_mgr, app->tab_mgr.active_index);
+                    tab_manager_close_tab(&app->tab_mgr, app->tab_mgr.active_index, app->shutting_down);
                 } else {
                     app_file_new(app);
                 }

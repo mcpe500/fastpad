@@ -6,14 +6,14 @@
 // Initialize tab manager
 bool tab_manager_init(TabManager *mgr, HWND parent_hwnd);
 
-// Free tab manager resources
+// Free tab manager resources (call during normal shutdown, no prompts)
 void tab_manager_free(TabManager *mgr);
 
 // Create a new tab (returns tab index, -1 on failure)
 int tab_manager_new_tab(TabManager *mgr);
 
-// Close a tab
-bool tab_manager_close_tab(TabManager *mgr, int index);
+// Close a tab (with optional shutdown mode to prevent auto-creating tabs)
+bool tab_manager_close_tab(TabManager *mgr, int index, bool is_shutting_down);
 
 // Switch to a tab
 bool tab_manager_switch_tab(TabManager *mgr, int index);
