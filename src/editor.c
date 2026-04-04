@@ -67,35 +67,43 @@ static void editor_add_undo_op(Editor *editor, UndoOpType type, TextPos pos, con
     for (int i = 0; i < editor->redo.count; i++) {
         if (editor->redo.ops[i].text) {
             free(editor->redo.ops[i].text);
+            editor->redo.ops[i].text = NULL;
         }
     }
     editor->redo.count = 0;
     editor->redo.current = 0;
-    
+
     // Add to undo history
     if (editor->undo.count >= editor->undo.max_ops) {
-        // Remove oldest operation
+        // Remove oldest operation - free text BEFORE shifting
         if (editor->undo.ops[0].text) {
             free(editor->undo.ops[0].text);
+            editor->undo.ops[0].text = NULL;
         }
-        
+
         for (int i = 1; i < editor->undo.count; i++) {
             editor->undo.ops[i-1] = editor->undo.ops[i];
         }
         editor->undo.count--;
     }
-    
+
     UndoOp *op = &editor->undo.ops[editor->undo.count];
     op->type = type;
     op->pos = pos;
     op->length = length;
     op->text = (char *)malloc(length + 1);
-    
+
     if (op->text && text) {
         memcpy(op->text, text, length);
         op->text[length] = '\0';
+    } else if (!op->text) {
+        // malloc failed - don't count this operation
+        op->length = 0;
+        op->type = OP_DELETE;
+        op->pos = 0;
+        return;
     }
-    
+
     editor->undo.count++;
     editor->undo.current = editor->undo.count;
 }
@@ -718,21 +726,23 @@ bool editor_undo(Editor *editor) {
     if (editor->undo.current <= 0) {
         return false;
     }
-    
+
     editor->undo.current--;
     UndoOp *op = &editor->undo.ops[editor->undo.current];
-    
+
     // Add to redo history
     if (editor->redo.count >= editor->redo.max_ops) {
+        // Free oldest redo op text before shifting
         if (editor->redo.ops[0].text) {
             free(editor->redo.ops[0].text);
+            editor->redo.ops[0].text = NULL;
         }
         for (int i = 1; i < editor->redo.count; i++) {
             editor->redo.ops[i-1] = editor->redo.ops[i];
         }
         editor->redo.count--;
     }
-    
+
     UndoOp *redo_op = &editor->redo.ops[editor->redo.count];
     redo_op->type = (op->type == OP_INSERT) ? OP_DELETE : OP_INSERT;
     redo_op->pos = op->pos;
@@ -744,7 +754,7 @@ bool editor_undo(Editor *editor) {
     }
     editor->redo.count++;
     editor->redo.current = editor->redo.count;
-    
+
     // Execute inverse operation
     if (op->type == OP_INSERT) {
         // Undo insert = delete
@@ -755,11 +765,11 @@ bool editor_undo(Editor *editor) {
         buffer_insert(&editor->buffer, op->pos, op->text, op->length);
         editor->caret = op->pos + op->length;
     }
-    
+
     editor_clear_selection(editor);
     editor_scroll_to_caret(editor);
     InvalidateRect(editor->hwnd, NULL, FALSE);
-    
+
     return true;
 }
 
@@ -767,21 +777,23 @@ bool editor_redo(Editor *editor) {
     if (editor->redo.current <= 0) {
         return false;
     }
-    
+
     editor->redo.current--;
     UndoOp *op = &editor->redo.ops[editor->redo.current];
-    
+
     // Add back to undo history
     if (editor->undo.count >= editor->undo.max_ops) {
+        // Free oldest undo op text before shifting
         if (editor->undo.ops[0].text) {
             free(editor->undo.ops[0].text);
+            editor->undo.ops[0].text = NULL;
         }
         for (int i = 1; i < editor->undo.count; i++) {
             editor->undo.ops[i-1] = editor->undo.ops[i];
         }
         editor->undo.count--;
     }
-    
+
     UndoOp *undo_op = &editor->undo.ops[editor->undo.count];
     undo_op->type = (op->type == OP_INSERT) ? OP_DELETE : OP_INSERT;
     undo_op->pos = op->pos;
@@ -793,19 +805,8 @@ bool editor_redo(Editor *editor) {
     }
     editor->undo.count++;
     editor->undo.current = editor->undo.count;
-    
-    // Remove from redo
-    if (op->text) {
-        free(op->text);
-        op->text = NULL;
-    }
-    for (int i = editor->redo.current; i < editor->redo.count - 1; i++) {
-        editor->redo.ops[i] = editor->redo.ops[i+1];
-    }
-    editor->redo.count--;
-    editor->redo.current = editor->redo.current > editor->redo.count ? editor->redo.count : editor->redo.current;
-    
-    // Execute operation
+
+    // Execute the redo operation (keep text in redo stack for future redo)
     if (op->type == OP_INSERT) {
         buffer_insert(&editor->buffer, op->pos, op->text, op->length);
         editor->caret = op->pos + op->length;
@@ -813,10 +814,10 @@ bool editor_redo(Editor *editor) {
         buffer_delete(&editor->buffer, op->pos, op->length);
         editor->caret = op->pos;
     }
-    
+
     editor_clear_selection(editor);
     editor_scroll_to_caret(editor);
     InvalidateRect(editor->hwnd, NULL, FALSE);
-    
+
     return true;
 }
