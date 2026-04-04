@@ -442,34 +442,48 @@ void app_on_command(App *app, WPARAM wParam) {
         case ID_FILE_EXIT:
             app_exit(app);
             break;
-            
-        case ID_EDIT_UNDO:
-            editor_undo(&tab_manager_get_active(&app->tab_mgr)->editor);
+
+        case ID_EDIT_UNDO: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) editor_undo(&tab->editor);
             break;
-            
-        case ID_EDIT_REDO:
-            editor_redo(&tab_manager_get_active(&app->tab_mgr)->editor);
+        }
+
+        case ID_EDIT_REDO: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) editor_redo(&tab->editor);
             break;
-            
-        case ID_EDIT_CUT:
-            editor_cut(&tab_manager_get_active(&app->tab_mgr)->editor);
+        }
+
+        case ID_EDIT_CUT: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) editor_cut(&tab->editor);
             break;
-            
-        case ID_EDIT_COPY:
-            editor_copy(&tab_manager_get_active(&app->tab_mgr)->editor);
+        }
+
+        case ID_EDIT_COPY: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) editor_copy(&tab->editor);
             break;
-            
-        case ID_EDIT_PASTE:
-            editor_paste(&tab_manager_get_active(&app->tab_mgr)->editor);
+        }
+
+        case ID_EDIT_PASTE: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) editor_paste(&tab->editor);
             break;
-            
-        case ID_EDIT_SELECTALL:
-            editor_select_all(&tab_manager_get_active(&app->tab_mgr)->editor);
+        }
+
+        case ID_EDIT_SELECTALL: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) editor_select_all(&tab->editor);
             break;
-            
-        case ID_EDIT_FIND:
-            search_show_dialog(app->hwnd, &tab_manager_get_active(&app->tab_mgr)->editor);
+        }
+
+        case ID_EDIT_FIND: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) search_show_dialog(app->hwnd, &tab->editor);
             break;
+        }
             
         case ID_VIEW_WORDWRAP:
             app->word_wrap = !app->word_wrap;
