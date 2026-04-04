@@ -4,6 +4,7 @@
 #include "fileio.h"
 #include "buffer.h"
 #include "search.h"
+#include "tab_manager.h"
 #include <commctrl.h>
 #include <stdio.h>
 #include <string.h>
@@ -19,6 +20,8 @@
 #define ID_FILE_SAVE 4003
 #define ID_FILE_SAVEAS 4004
 #define ID_FILE_EXIT 4005
+#define ID_FILE_NEW_TAB 4006
+#define ID_FILE_CLOSE_TAB 4007
 #define ID_EDIT_UNDO 4010
 #define ID_EDIT_REDO 4011
 #define ID_EDIT_CUT 4012
@@ -55,17 +58,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 NULL
             );
             
-            // Initialize editor
-            editor_init(&app->editor, hwnd);
-            render_init(&app->editor);
+            // Initialize tab manager (creates first tab automatically)
+            if (!tab_manager_init(&app->tab_mgr, hwnd)) {
+                MessageBoxA(hwnd, "Failed to initialize tabs.", "Error", MB_ICONERROR);
+                return -1;
+            }
             
-            // Set initial filename
-            strcpy(app->filename, "Untitled");
-            app->editor.modified = false;
             app->show_statusbar = true;
             app->word_wrap = false;
             
-            app_update_title(app);
+            tab_manager_update_window_title(&app->tab_mgr, hwnd);
             break;
         }
             
@@ -134,6 +136,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
         }
             
+        case WM_NOTIFY: {
+            NMHDR *nmhdr = (NMHDR *)lParam;
+            if (nmhdr->hwndFrom == app->tab_mgr.hwnd) {
+                if (nmhdr->code == TCN_SELCHANGE) {
+                    // Tab selection changed
+                    int sel = TabCtrl_GetCurSel(app->tab_mgr.hwnd);
+                    tab_manager_on_tab_click(&app->tab_mgr, sel);
+                }
+            }
+            break;
+        }
+            
         case WM_COMMAND: {
             app_on_command(app, wParam);
             break;
@@ -147,7 +161,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
             
         case WM_DESTROY: {
-            app_free(app);
+            tab_manager_free(&app->tab_mgr);
             PostQuitMessage(0);
             break;
         }
@@ -183,10 +197,6 @@ bool app_init(App *app, HINSTANCE hInstance) {
     return true;
 }
 
-void app_free(App *app) {
-    editor_free(&app->editor);
-}
-
 HWND app_create_window(App *app, HINSTANCE hInstance) {
     app->hwnd = CreateWindowExA(
         0,
@@ -214,6 +224,9 @@ HWND app_create_window(App *app, HINSTANCE hInstance) {
     // File menu
     HMENU file_menu = CreatePopupMenu();
     AppendMenuA(file_menu, MF_STRING, ID_FILE_NEW, "&New\tCtrl+N");
+    AppendMenuA(file_menu, MF_STRING, ID_FILE_NEW_TAB, "New Ta&b\tCtrl+T");
+    AppendMenuA(file_menu, MF_STRING, ID_FILE_CLOSE_TAB, "&Close Tab\tCtrl+W");
+    AppendMenuA(file_menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(file_menu, MF_STRING, ID_FILE_OPEN, "&Open...\tCtrl+O");
     AppendMenuA(file_menu, MF_STRING, ID_FILE_SAVE, "&Save\tCtrl+S");
     AppendMenuA(file_menu, MF_STRING, ID_FILE_SAVEAS, "Save &As...\tCtrl+Shift+S");
@@ -257,139 +270,128 @@ HWND app_create_window(App *app, HINSTANCE hInstance) {
 }
 
 void app_file_new(App *app) {
-    if (app_check_unsaved(app)) {
-        buffer_free(&app->editor.buffer);
-        buffer_init(&app->editor.buffer, 4096);
-        
-        app->editor.caret = 0;
-        app->editor.selection.start = 0;
-        app->editor.selection.end = 0;
-        app->editor.modified = false;
-        
-        strcpy(app->filename, "Untitled");
-        app_update_title(app);
-        
-        InvalidateRect(app->hwnd, NULL, TRUE);
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (!tab) return;
+    
+    if (tab->editor.modified) {
+        if (!app_check_unsaved(app)) {
+            return;
+        }
     }
+    
+    // Clear current tab's content
+    buffer_free(&tab->editor.buffer);
+    buffer_init(&tab->editor.buffer, 4096);
+    
+    tab->editor.caret = 0;
+    tab->editor.selection.start = 0;
+    tab->editor.selection.end = 0;
+    tab->editor.modified = false;
+    
+    snprintf(tab->filename, sizeof(tab->filename), "Untitled");
+    snprintf(tab->title, sizeof(tab->title), "Untitled");
+    
+    tab_manager_update_control(&app->tab_mgr);
+    tab_manager_update_window_title(&app->tab_mgr, app->hwnd);
+    
+    InvalidateRect(tab->hwnd, NULL, TRUE);
 }
 
 void app_file_open(App *app) {
-    if (app_check_unsaved(app)) {
-        char filename[MAX_PATH] = {0};
-        
-        if (file_open_dialog(app->hwnd, filename, MAX_PATH, &app->editor.buffer)) {
-            // Extract just the filename for title
-            const char *basename = strrchr(filename, '\\');
-            if (basename) {
-                basename++;
-            } else {
-                basename = filename;
-            }
-            
-            strncpy(app->filename, filename, MAX_PATH);
-            app->editor.caret = 0;
-            app->editor.selection.start = 0;
-            app->editor.selection.end = 0;
-            app->editor.modified = false;
-            
-            app_update_title(app);
-            InvalidateRect(app->hwnd, NULL, TRUE);
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (!tab) return;
+    
+    if (tab->editor.modified) {
+        if (!app_check_unsaved(app)) {
+            return;
         }
+    }
+    
+    char filename[MAX_PATH] = {0};
+    
+    if (file_open_dialog(app->hwnd, filename, MAX_PATH, &tab->editor.buffer)) {
+        // Extract just the filename for title
+        const char *basename = strrchr(filename, '\\');
+        if (basename) {
+            basename++;
+        } else {
+            basename = filename;
+        }
+        
+        tab_manager_set_tab_filename(&app->tab_mgr, app->tab_mgr.active_index, filename);
+        
+        tab->editor.caret = 0;
+        tab->editor.selection.start = 0;
+        tab->editor.selection.end = 0;
+        tab->editor.modified = false;
+        
+        InvalidateRect(tab->hwnd, NULL, TRUE);
     }
 }
 
 void app_file_save(App *app) {
-    if (strcmp(app->filename, "Untitled") == 0) {
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (!tab) return;
+    
+    if (strcmp(tab->filename, "Untitled") == 0) {
         // Save as
         char filename[MAX_PATH] = {0};
         
-        if (file_save_dialog(app->hwnd, filename, MAX_PATH, &app->editor.buffer)) {
-            strncpy(app->filename, filename, MAX_PATH);
-            app->editor.modified = false;
-            app_update_title(app);
+        if (file_save_dialog(app->hwnd, filename, MAX_PATH, &tab->editor.buffer)) {
+            tab_manager_set_tab_filename(&app->tab_mgr, app->tab_mgr.active_index, filename);
+            tab->editor.modified = false;
+            tab_manager_update_window_title(&app->tab_mgr, app->hwnd);
         }
     } else {
         // Save to current file
-        if (file_save(app->hwnd, app->filename, &app->editor.buffer)) {
-            app->editor.modified = false;
-            app_update_title(app);
+        if (file_save(app->hwnd, tab->filename, &tab->editor.buffer)) {
+            tab->editor.modified = false;
+            tab_manager_update_window_title(&app->tab_mgr, app->hwnd);
         }
     }
 }
 
 void app_file_save_as(App *app) {
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (!tab) return;
+    
     char filename[MAX_PATH] = {0};
     
-    if (file_save_dialog(app->hwnd, filename, MAX_PATH, &app->editor.buffer)) {
-        strncpy(app->filename, filename, MAX_PATH);
-        app->editor.modified = false;
-        app_update_title(app);
+    if (file_save_dialog(app->hwnd, filename, MAX_PATH, &tab->editor.buffer)) {
+        tab_manager_set_tab_filename(&app->tab_mgr, app->tab_mgr.active_index, filename);
+        tab->editor.modified = false;
+        tab_manager_update_window_title(&app->tab_mgr, app->hwnd);
     }
 }
 
 void app_exit(App *app) {
-    if (app_check_unsaved(app)) {
+    if (tab_manager_check_unsaved(&app->tab_mgr)) {
         DestroyWindow(app->hwnd);
     }
 }
 
-void app_update_title(App *app) {
-    char title[MAX_PATH + 20];
-    
-    const char *basename = strrchr(app->filename, '\\');
-    if (basename) {
-        basename++;
-    } else {
-        basename = app->filename;
-    }
-    
-    if (app->editor.modified) {
-        snprintf(title, sizeof(title), "*%s - FastPad", basename);
-    } else {
-        snprintf(title, sizeof(title), "%s - FastPad", basename);
-    }
-    
-    SetWindowTextA(app->hwnd, title);
-}
-
 void app_update_statusbar(App *app) {
-    if (!app->statusbar || !app->show_statusbar) {
-        return;
-    }
-    
-    int line, col;
-    editor_get_linecol(&app->editor, &line, &col);
-    
-    char text[100];
-    snprintf(text, sizeof(text), "Ln %d, Col %d  %s", 
-             line, col, 
-             app->editor.modified ? "Modified" : "");
-    
-    // Status bar parts
-    int parts[3];
-    RECT rect;
-    GetClientRect(app->hwnd, &rect);
-    
-    parts[0] = rect.right / 3;
-    parts[1] = (rect.right * 2) / 3;
-    parts[2] = -1;
-    
-    SendMessage(app->statusbar, SB_SETPARTS, 3, (LPARAM)parts);
-    SendMessage(app->statusbar, SB_SETTEXTA, 0, (LPARAM)text);
+    tab_manager_update_statusbar(&app->tab_mgr);
 }
 
 bool app_check_unsaved(App *app) {
-    if (app->editor.modified) {
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (!tab) return true;
+    
+    if (tab->editor.modified) {
+        char msg[512];
+        snprintf(msg, sizeof(msg), "Save changes to \"%s\"?", tab->title);
+        
         int result = MessageBoxA(
             app->hwnd,
-            "Save changes?",
+            msg,
             "FastPad",
             MB_YESNOCANCEL | MB_ICONQUESTION
         );
         
         if (result == IDYES) {
             app_file_save(app);
-            return !app->editor.modified; // Return true if save succeeded
+            return !tab->editor.modified;
         } else if (result == IDCANCEL) {
             return false;
         }
@@ -402,6 +404,19 @@ void app_on_command(App *app, WPARAM wParam) {
     switch (LOWORD(wParam)) {
         case ID_FILE_NEW:
             app_file_new(app);
+            break;
+            
+        case ID_FILE_NEW_TAB:
+            tab_manager_new_tab(&app->tab_mgr);
+            break;
+            
+        case ID_FILE_CLOSE_TAB:
+            if (app->tab_mgr.count > 1) {
+                tab_manager_close_tab(&app->tab_mgr, app->tab_mgr.active_index);
+            } else {
+                // Last tab - just clear it
+                app_file_new(app);
+            }
             break;
             
         case ID_FILE_OPEN:
@@ -421,31 +436,31 @@ void app_on_command(App *app, WPARAM wParam) {
             break;
             
         case ID_EDIT_UNDO:
-            editor_undo(&app->editor);
+            editor_undo(&tab_manager_get_active(&app->tab_mgr)->editor);
             break;
             
         case ID_EDIT_REDO:
-            editor_redo(&app->editor);
+            editor_redo(&tab_manager_get_active(&app->tab_mgr)->editor);
             break;
             
         case ID_EDIT_CUT:
-            editor_cut(&app->editor);
+            editor_cut(&tab_manager_get_active(&app->tab_mgr)->editor);
             break;
             
         case ID_EDIT_COPY:
-            editor_copy(&app->editor);
+            editor_copy(&tab_manager_get_active(&app->tab_mgr)->editor);
             break;
             
         case ID_EDIT_PASTE:
-            editor_paste(&app->editor);
+            editor_paste(&tab_manager_get_active(&app->tab_mgr)->editor);
             break;
             
         case ID_EDIT_SELECTALL:
-            editor_select_all(&app->editor);
+            editor_select_all(&tab_manager_get_active(&app->tab_mgr)->editor);
             break;
             
         case ID_EDIT_FIND:
-            search_show_dialog(app->hwnd, &app->editor);
+            search_show_dialog(app->hwnd, &tab_manager_get_active(&app->tab_mgr)->editor);
             break;
             
         case ID_VIEW_WORDWRAP:
@@ -472,16 +487,15 @@ void app_on_command(App *app, WPARAM wParam) {
 }
 
 void app_on_size(App *app, int width, int height) {
-    (void)width;
     (void)height;
-    
+
     // Resize status bar
     if (app->statusbar) {
         SendMessage(app->statusbar, WM_SIZE, 0, 0);
     }
-    
-    // Resize editor
-    editor_resize(&app->editor);
+
+    // Resize tab bar and active editor
+    tab_manager_resize(&app->tab_mgr, width);
     app_update_statusbar(app);
 }
 
@@ -489,13 +503,20 @@ void app_on_paint(App *app) {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(app->hwnd, &ps);
     
-    render_paint(&app->editor, hdc, &ps.rcPaint);
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (tab) {
+        render_paint(&tab->editor, hdc, &ps.rcPaint);
+    }
+    
     app_update_statusbar(app);
     
     EndPaint(app->hwnd, &ps);
 }
 
 void app_on_char(App *app, WPARAM wParam) {
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (!tab) return;
+    
     char ch = (char)wParam;
     
     // Handle control characters
@@ -503,17 +524,40 @@ void app_on_char(App *app, WPARAM wParam) {
         return; // Handled by VK_RETURN
     }
     
-    editor_char_input(&app->editor, ch);
+    editor_char_input(&tab->editor, ch);
 }
 
 void app_on_keydown(App *app, WPARAM wParam) {
     bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
 
     if (ctrl) {
         switch (wParam) {
             case 'N': // Ctrl+N - New
                 app_file_new(app);
+                return;
+            case 'T': // Ctrl+T - New Tab
+                tab_manager_new_tab(&app->tab_mgr);
+                return;
+            case 'W': // Ctrl+W - Close Tab
+                if (app->tab_mgr.count > 1) {
+                    tab_manager_close_tab(&app->tab_mgr, app->tab_mgr.active_index);
+                } else {
+                    app_file_new(app);
+                }
+                return;
+            case VK_TAB: // Ctrl+Tab - Next Tab
+                if (shift) {
+                    // Ctrl+Shift+Tab - Previous Tab
+                    int prev = app->tab_mgr.active_index - 1;
+                    if (prev < 0) prev = app->tab_mgr.count - 1;
+                    tab_manager_switch_tab(&app->tab_mgr, prev);
+                } else {
+                    // Ctrl+Tab - Next Tab
+                    int next = (app->tab_mgr.active_index + 1) % app->tab_mgr.count;
+                    tab_manager_switch_tab(&app->tab_mgr, next);
+                }
                 return;
             case 'O': // Ctrl+O - Open
                 app_file_open(app);
@@ -526,39 +570,55 @@ void app_on_keydown(App *app, WPARAM wParam) {
                 }
                 return;
             case 'F': // Ctrl+F - Find
-                search_show_dialog(app->hwnd, &app->editor);
+                if (tab) search_show_dialog(app->hwnd, &tab->editor);
                 return;
             case 'A': // Ctrl+A - Select All
-                editor_select_all(&app->editor);
+                if (tab) editor_select_all(&tab->editor);
                 return;
             case 'Z': // Ctrl+Z - Undo
-                editor_undo(&app->editor);
+                if (tab) editor_undo(&tab->editor);
                 return;
             case 'Y': // Ctrl+Y - Redo
-                editor_redo(&app->editor);
+                if (tab) editor_redo(&tab->editor);
                 return;
             case 'X': // Ctrl+X - Cut
-                editor_cut(&app->editor);
+                if (tab) editor_cut(&tab->editor);
                 return;
             case 'C': // Ctrl+C - Copy
-                editor_copy(&app->editor);
+                if (tab) editor_copy(&tab->editor);
                 return;
             case 'V': // Ctrl+V - Paste
-                editor_paste(&app->editor);
+                if (tab) editor_paste(&tab->editor);
                 return;
         }
     }
     
-    editor_key_down(&app->editor, (int)wParam);
+    if (tab) {
+        editor_key_down(&tab->editor, (int)wParam);
+    }
 }
 
 void app_on_lbuttondown(App *app, int x, int y, bool shift) {
-    editor_mouse_click(&app->editor, x, y, shift);
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (!tab) return;
+    
+    // Adjust y for tab bar
+    y -= app->tab_mgr.height;
+    if (y < 0) return;
+    
+    editor_mouse_click(&tab->editor, x, y, shift);
 }
 
 void app_on_mousemove(App *app, int x, int y, bool dragging) {
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (!tab) return;
+    
+    // Adjust y for tab bar
+    y -= app->tab_mgr.height;
+    if (y < 0) return;
+    
     if (dragging) {
-        editor_mouse_drag(&app->editor, x, y);
+        editor_mouse_drag(&tab->editor, x, y);
     }
 }
 
@@ -568,23 +628,29 @@ void app_on_lbuttonup(App *app) {
 }
 
 void app_on_setfocus(App *app) {
-    ShowCaret(app->hwnd);
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (tab) {
+        ShowCaret(tab->hwnd);
+    }
 }
 
 void app_on_mousewheel(App *app, int delta) {
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (!tab) return;
+    
     int lines = delta / WHEEL_DELTA;
-    app->editor.viewport.scroll_y -= lines;
+    tab->editor.viewport.scroll_y -= lines;
     
     // Clamp scroll position
-    int total_lines = buffer_line_count(&app->editor.buffer);
-    if (app->editor.viewport.scroll_y < 0) {
-        app->editor.viewport.scroll_y = 0;
-    } else if (app->editor.viewport.scroll_y + app->editor.viewport.visible_lines > total_lines) {
-        app->editor.viewport.scroll_y = total_lines - app->editor.viewport.visible_lines;
-        if (app->editor.viewport.scroll_y < 0) {
-            app->editor.viewport.scroll_y = 0;
+    int total_lines = buffer_line_count(&tab->editor.buffer);
+    if (tab->editor.viewport.scroll_y < 0) {
+        tab->editor.viewport.scroll_y = 0;
+    } else if (tab->editor.viewport.scroll_y + tab->editor.viewport.visible_lines > total_lines) {
+        tab->editor.viewport.scroll_y = total_lines - tab->editor.viewport.visible_lines;
+        if (tab->editor.viewport.scroll_y < 0) {
+            tab->editor.viewport.scroll_y = 0;
         }
     }
     
-    InvalidateRect(app->hwnd, NULL, FALSE);
+    InvalidateRect(tab->hwnd, NULL, FALSE);
 }
