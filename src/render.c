@@ -84,19 +84,16 @@ static void render_draw_line(HDC hdc, const char *text, int length, int x, int y
 
 void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
     (void)update_rect;
-    
+
     // Select font
     HFONT old_font = (HFONT)SelectObject(hdc, editor->font);
-    
-    // Get client area (adjusted for tab bar via viewport org)
+
+    // Get client area
+    // NOTE: app_on_paint() has already set viewport origin to account for tab bar,
+    // so all drawing is automatically offset. No manual adjustment needed here.
     RECT client_rect;
     GetClientRect(editor->hwnd, &client_rect);
-    
-    // Adjust client rect for tab bar (y starts from 0 in viewport coords)
-    extern App g_app;
-    client_rect.top = 0;
-    client_rect.bottom -= g_app.tab_mgr.height;
-    
+
     // Fill background
     HBRUSH bg_brush = CreateSolidBrush(RGB(255, 255, 255));
     FillRect(hdc, &client_rect, bg_brush);
@@ -178,12 +175,14 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
     }
     
     // Draw caret if window is focused
+    // NOTE: SetCaretPos is already affected by SetViewportOrgEx in app_on_paint(),
+    // so no manual tab_height offset needed here.
     if (GetFocus() == editor->hwnd) {
         LineCol caret_lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
         int caret_line = caret_lc.line - editor->viewport.scroll_y;
         int caret_x = (caret_lc.col - editor->viewport.scroll_x) * editor->viewport.char_width;
-        int caret_y = caret_line * editor->viewport.line_height + g_app.tab_mgr.height;
-        
+        int caret_y = caret_line * editor->viewport.line_height;
+
         if (caret_line >= 0 && caret_line <= editor->viewport.visible_lines) {
             CreateCaret(editor->hwnd, NULL, 1, editor->viewport.line_height);
             SetCaretPos(caret_x, caret_y);
