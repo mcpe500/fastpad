@@ -177,7 +177,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 bool app_init(App *app, HINSTANCE hInstance) {
     memset(app, 0, sizeof(App));
-    
+
+    // Initialize common controls for status bar and tab control
+    INITCOMMONCONTROLSEX icex = {0};
+    icex.dwSize = sizeof(icex);
+    icex.dwICC = ICC_BAR_CLASSES | ICC_TAB_CLASSES;
+    InitCommonControlsEx(&icex);
+
     // Register window class
     WNDCLASSEXA wc = {0};
     wc.cbSize = sizeof(wc);
