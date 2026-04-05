@@ -145,7 +145,10 @@ bool tab_manager_close_tab(TabManager *mgr, int index, bool is_shutting_down) {
     // Free editor resources
     editor_free(&tab->editor);
 
-    // No child window to destroy (using parent directly)
+    // ARCHITECTURE NOTE: All tabs share the parent window (tab->hwnd = parent_hwnd)
+    // This is intentional - keyboard input (WM_CHAR/WM_KEYDOWN) goes to the main
+    // window's WndProc, which routes to the active tab's editor.
+    // No child windows are created, so there's nothing to destroy here.
     tab->hwnd = NULL;
 
     // Remove from tab control
@@ -370,19 +373,30 @@ void tab_manager_set_tab_filename(TabManager *mgr, int index, const char *filena
     }
 }
 
+// Prevent recursive title updates when switching tabs
+static bool g_updating_title = false;
+
 void tab_manager_update_window_title(TabManager *mgr, HWND hwnd) {
+    // Prevent recursive updates (e.g., if SetWindowText triggers WM_SIZE)
+    if (g_updating_title) return;
+    g_updating_title = true;
+
     Tab *active = tab_manager_get_active(mgr);
-    if (!active) return;
-    
+    if (!active) {
+        g_updating_title = false;
+        return;
+    }
+
     char title[MAX_PATH + 50];
-    
+
     if (active->editor.modified) {
         snprintf(title, sizeof(title), "*%s - FastPad", active->title);
     } else {
         snprintf(title, sizeof(title), "%s - FastPad", active->title);
     }
-    
+
     SetWindowTextA(hwnd, title);
+    g_updating_title = false;
 }
 
 void tab_manager_update_statusbar(TabManager *mgr) {
