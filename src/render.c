@@ -57,8 +57,8 @@ static int byte_col_to_display_col(GapBuffer *buf, TextPos byte_start, TextPos b
     return display_col;
 }
 
-// Helper: get the display column of caret within its line
-static int get_caret_display_col(Editor *editor) {
+// Helper: get the display column of caret within its line (NOT static - used by editor_scroll_to_caret)
+int get_caret_display_col(Editor *editor) {
     LineCol lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
     TextPos line_start = buffer_line_start(&editor->buffer, lc.line);
     return byte_col_to_display_col(&editor->buffer, line_start, editor->caret);

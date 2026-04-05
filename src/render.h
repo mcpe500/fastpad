@@ -24,4 +24,7 @@ int render_line_to_y(Editor *editor, int line);
 // Update viewport dimensions on resize
 void render_resize(Editor *editor, int width, int height);
 
+// Get caret display column (tabs expanded to spaces)
+int get_caret_display_col(Editor *editor);
+
 #endif // RENDER_H

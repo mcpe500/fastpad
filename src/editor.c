@@ -384,12 +384,25 @@ void editor_key_down(Editor *editor, int key) {
             InvalidateRect(editor->hwnd, NULL, FALSE);
             break;
             
-        case VK_PRIOR: // Page Up
-            editor->caret -= editor->viewport.visible_cols * editor->viewport.line_height;
-            if (editor->caret < 0) {
-                editor->caret = 0;
+        case VK_PRIOR: { // Page Up
+            int lines_to_move = editor->viewport.visible_lines;
+            if (lines_to_move < 1) lines_to_move = 1;
+            
+            LineCol lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
+            int new_line = lc.line - lines_to_move;
+            if (new_line < 0) new_line = 0;
+            
+            TextPos new_pos = buffer_line_start(&editor->buffer, new_line);
+            // Try to maintain column position
+            TextPos line_end = buffer_line_end(&editor->buffer, new_line);
+            int max_col = line_end - new_pos;
+            if (lc.col > max_col) {
+                new_pos = line_end;
+            } else {
+                new_pos += lc.col;
             }
             
+            editor->caret = new_pos;
             if (!shift) {
                 editor_clear_selection(editor);
             } else {
@@ -398,13 +411,28 @@ void editor_key_down(Editor *editor, int key) {
             editor_scroll_to_caret(editor);
             InvalidateRect(editor->hwnd, NULL, FALSE);
             break;
+        }
+
+        case VK_NEXT: { // Page Down
+            int lines_to_move = editor->viewport.visible_lines;
+            if (lines_to_move < 1) lines_to_move = 1;
             
-        case VK_NEXT: // Page Down
-            editor->caret += editor->viewport.visible_cols * editor->viewport.line_height;
-            if (editor->caret > editor->buffer.size) {
-                editor->caret = editor->buffer.size;
+            LineCol lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
+            int total_lines = buffer_line_count(&editor->buffer);
+            int new_line = lc.line + lines_to_move;
+            if (new_line >= total_lines) new_line = total_lines - 1;
+            
+            TextPos new_pos = buffer_line_start(&editor->buffer, new_line);
+            // Try to maintain column position
+            TextPos line_end = buffer_line_end(&editor->buffer, new_line);
+            int max_col = line_end - new_pos;
+            if (lc.col > max_col) {
+                new_pos = line_end;
+            } else {
+                new_pos += lc.col;
             }
             
+            editor->caret = new_pos;
             if (!shift) {
                 editor_clear_selection(editor);
             } else {
@@ -413,6 +441,7 @@ void editor_key_down(Editor *editor, int key) {
             editor_scroll_to_caret(editor);
             InvalidateRect(editor->hwnd, NULL, FALSE);
             break;
+        }
             
         case VK_BACK: {
             if (editor_has_selection(editor)) {
@@ -752,19 +781,20 @@ void editor_get_linecol(Editor *editor, int *line, int *col) {
 
 void editor_scroll_to_caret(Editor *editor) {
     LineCol lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
-    
+
     // Scroll vertically
     if (lc.line < editor->viewport.scroll_y) {
         editor->viewport.scroll_y = lc.line;
     } else if (lc.line >= editor->viewport.scroll_y + editor->viewport.visible_lines) {
         editor->viewport.scroll_y = lc.line - editor->viewport.visible_lines + 1;
     }
-    
-    // Scroll horizontally
-    if (lc.col < editor->viewport.scroll_x) {
-        editor->viewport.scroll_x = lc.col;
-    } else if (lc.col >= editor->viewport.scroll_x + editor->viewport.visible_cols) {
-        editor->viewport.scroll_x = lc.col - editor->viewport.visible_cols + 1;
+
+    // Scroll horizontally using display column (tabs expanded)
+    int caret_display_col = get_caret_display_col(editor);
+    if (caret_display_col < editor->viewport.scroll_x) {
+        editor->viewport.scroll_x = caret_display_col;
+    } else if (caret_display_col >= editor->viewport.scroll_x + editor->viewport.visible_cols) {
+        editor->viewport.scroll_x = caret_display_col - editor->viewport.visible_cols + 1;
     }
 }
 
