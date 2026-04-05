@@ -54,7 +54,11 @@ char *file_normalize_line_endings(const char *text, int length) {
 }
 
 bool file_load(HWND hwnd, const char *filename, GapBuffer *buffer) {
-    HANDLE hFile = CreateFileA(
+    HANDLE hFile = INVALID_HANDLE_VALUE;
+    char *fileData = NULL;
+    bool success = false;
+
+    hFile = CreateFileA(
         filename,
         GENERIC_READ,
         FILE_SHARE_READ,
@@ -63,51 +67,48 @@ bool file_load(HWND hwnd, const char *filename, GapBuffer *buffer) {
         FILE_ATTRIBUTE_NORMAL,
         NULL
     );
-    
+
     if (hFile == INVALID_HANDLE_VALUE) {
         MessageBoxA(hwnd, "Failed to open file.", "Error", MB_ICONERROR);
-        return false;
+        goto cleanup;
     }
-    
+
     DWORD fileSize = GetFileSize(hFile, NULL);
     if (fileSize == INVALID_FILE_SIZE) {
-        CloseHandle(hFile);
         MessageBoxA(hwnd, "Failed to read file size.", "Error", MB_ICONERROR);
-        return false;
+        goto cleanup;
     }
-    
+
     // Handle empty files
     if (fileSize == 0) {
-        CloseHandle(hFile);
-        buffer->size = 0;
-        buffer->gap_start = 0;
-        buffer->gap_length = buffer->capacity;
-        return true;
+        // Properly reinitialize buffer for empty file
+        buffer_free(buffer);
+        if (!buffer_init(buffer, 4096)) {
+            MessageBoxA(hwnd, "Out of memory.", "Error", MB_ICONERROR);
+            goto cleanup;
+        }
+        success = true;
+        goto cleanup;
     }
-    
-    char *fileData = (char *)malloc(fileSize);
+
+    fileData = (char *)malloc(fileSize);
     if (!fileData) {
-        CloseHandle(hFile);
         MessageBoxA(hwnd, "Out of memory.", "Error", MB_ICONERROR);
-        return false;
+        goto cleanup;
     }
-    
+
     DWORD bytesRead;
     if (!ReadFile(hFile, fileData, fileSize, &bytesRead, NULL)) {
-        free(fileData);
-        CloseHandle(hFile);
         MessageBoxA(hwnd, "Failed to read file.", "Error", MB_ICONERROR);
-        return false;
+        goto cleanup;
     }
-    
-    CloseHandle(hFile);
-    
+
     // Skip BOM if present
     int offset = 0;
     if (file_has_bom(fileData, bytesRead)) {
         offset = 3;
     }
-    
+
     // Convert CRLF to LF for internal storage
     int lf_count = 0;
     for (DWORD i = offset; i < bytesRead; i++) {
@@ -115,17 +116,16 @@ bool file_load(HWND hwnd, const char *filename, GapBuffer *buffer) {
             lf_count++;
         }
     }
-    
+
     int text_length = (int)bytesRead - (int)offset - lf_count;
-    
+
     // Initialize buffer with text
     buffer_free(buffer);
     if (!buffer_init(buffer, text_length + 1024)) {
-        free(fileData);
         MessageBoxA(hwnd, "Out of memory.", "Error", MB_ICONERROR);
-        return false;
+        goto cleanup;
     }
-    
+
     // Copy text with normalized line endings
     int dest_pos = 0;
     for (DWORD i = offset; i < bytesRead; i++) {
@@ -136,13 +136,21 @@ bool file_load(HWND hwnd, const char *filename, GapBuffer *buffer) {
             buffer->data[dest_pos++] = fileData[i];
         }
     }
-    
+
     buffer->size = text_length;
     buffer->gap_start = text_length;
     buffer->gap_length = buffer->capacity - text_length;
-    
-    free(fileData);
-    return true;
+
+    success = true;
+
+cleanup:
+    if (hFile != INVALID_HANDLE_VALUE) {
+        CloseHandle(hFile);
+    }
+    if (fileData) {
+        free(fileData);
+    }
+    return success;
 }
 
 bool file_save(HWND hwnd, const char *filename, GapBuffer *buffer) {

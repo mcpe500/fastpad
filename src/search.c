@@ -168,14 +168,15 @@ static LRESULT CALLBACK FindSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
 }
 
 void search_show_dialog(HWND parent_hwnd, Editor *editor) {
-    // If dialog already exists, bring to front and set editor
+    // If dialog already exists, bring to front and UPDATE both editor and parent
     if (g_find_dialog && IsWindow(g_find_dialog)) {
         g_find_editor = editor;
+        g_find_parent = parent_hwnd;  // Always update parent to current tab's window
         SetForegroundWindow(g_find_dialog);
         SetFocus(g_find_edit);
         return;
     }
-    
+
     g_find_editor = editor;
     g_find_parent = parent_hwnd;
     
