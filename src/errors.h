@@ -34,8 +34,6 @@
 #define MSG_WORD_WRAP_NOT_IMPLEMENTED \
     "Word wrap is not yet implemented.\n" \
     "Long lines will extend beyond the visible area."
-
-/* Dialog titles */
 #define DLG_ERROR "Error"
 #define DLG_FASTPAD "FastPad"
 #define DLG_FIND "Find"

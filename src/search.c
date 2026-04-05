@@ -104,82 +104,104 @@ TextPos search_find_prev(GapBuffer *buffer, TextPos current_pos, const char *tex
     return -1;
 }
 
-// Global find dialog state
-static char g_find_text[256] = {0};
-static bool g_find_match_case = false;
-static HWND g_find_dialog = NULL;
-static HWND g_find_edit = NULL;
-static Editor *g_find_editor = NULL;
+// BUG #010 Fix: Use per-instance data instead of global state for thread safety
+typedef struct {
+    char find_text[256];
+    bool match_case;
+    Editor *editor;
+    HWND parent;
+    HWND edit_ctrl;
+} FindDialogData;
 
-// Find dialog window procedure
-static HWND g_find_parent = NULL;
+static HWND g_find_dialog = NULL;  // Only used for singleton dialog detection
 
 static LRESULT CALLBACK FindSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    // Get per-instance data
+    FindDialogData *data = (FindDialogData *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+    
     switch (msg) {
         case WM_COMMAND: {
             WORD id = LOWORD(wParam);
-            
+
             if (id == 101) { // Find Next button
-                // Get text from edit control
-                GetWindowTextA(g_find_edit, g_find_text, sizeof(g_find_text));
+                if (!data) break;
                 
-                if (g_find_text[0] != '\0' && g_find_editor) {
+                // Get text from edit control
+                GetWindowTextA(data->edit_ctrl, data->find_text, sizeof(data->find_text));
+
+                if (data->find_text[0] != '\0' && data->editor) {
                     TextPos pos = search_find_next(
-                        &g_find_editor->buffer,
-                        g_find_editor->caret,
-                        g_find_text,
-                        g_find_match_case
+                        &data->editor->buffer,
+                        data->editor->caret,
+                        data->find_text,
+                        data->match_case
                     );
-                    
+
                     if (pos != -1) {
-                        g_find_editor->caret = pos;
-                        g_find_editor->selection.start = pos;
-                        g_find_editor->selection.end = pos + (int)strlen(g_find_text);
-                        editor_scroll_to_caret(g_find_editor);
-                        InvalidateRect(g_find_editor->hwnd, NULL, FALSE);
-                        // Return focus to parent/editor, not the find dialog
-                        SetFocus(g_find_parent);
+                        data->editor->caret = pos;
+                        data->editor->selection.start = pos;
+                        data->editor->selection.end = pos + (int)strlen(data->find_text);
+                        editor_scroll_to_caret(data->editor);
+                        InvalidateRect(data->editor->hwnd, NULL, FALSE);
+                        // Return focus to parent/editor
+                        SetFocus(data->parent);
                     } else {
-                        MessageBoxA(hwnd, MSG_TEXT_NOT_FOUND, "Find", MB_ICONINFORMATION);
+                        MessageBoxA(hwnd, MSG_TEXT_NOT_FOUND, DLG_FIND, MB_ICONINFORMATION);
                     }
                 }
             } else if (id == 102) { // Close button
                 DestroyWindow(hwnd);
             } else if (id == 103) { // Match case checkbox
-                g_find_match_case = IsDlgButtonChecked(hwnd, 103) == BST_CHECKED;
+                if (data) {
+                    data->match_case = IsDlgButtonChecked(hwnd, 103) == BST_CHECKED;
+                }
             }
             break;
         }
-        
+
         case WM_CLOSE:
             DestroyWindow(hwnd);
             return 0;
-            
+
         case WM_DESTROY:
-            // Restore focus to parent window
-            if (g_find_parent) {
-                SetFocus(g_find_parent);
+            // Restore focus to parent window and clean up data
+            {
+                FindDialogData *data = (FindDialogData *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+                if (data && data->parent) {
+                    SetFocus(data->parent);
+                }
+                free(data);
+                g_find_dialog = NULL;
             }
-            g_find_dialog = NULL;
-            g_find_editor = NULL;
             return 0;
     }
-    
+
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
 void search_show_dialog(HWND parent_hwnd, Editor *editor) {
-    // If dialog already exists, bring to front and UPDATE both editor and parent
+    // BUG #010 Fix: Use per-instance data for thread safety
+    
+    // If dialog already exists, bring to front and UPDATE editor/parent in existing data
     if (g_find_dialog && IsWindow(g_find_dialog)) {
-        g_find_editor = editor;
-        g_find_parent = parent_hwnd;  // Always update parent to current tab's window
+        FindDialogData *data = (FindDialogData *)GetWindowLongPtr(g_find_dialog, GWLP_USERDATA);
+        if (data) {
+            data->editor = editor;
+            data->parent = parent_hwnd;
+        }
         SetForegroundWindow(g_find_dialog);
-        SetFocus(g_find_edit);
+        if (data && data->edit_ctrl) {
+            SetFocus(data->edit_ctrl);
+        }
         return;
     }
 
-    g_find_editor = editor;
-    g_find_parent = parent_hwnd;
+    // Allocate per-instance data (BUG #010 fix)
+    FindDialogData *data = (FindDialogData *)calloc(1, sizeof(FindDialogData));
+    if (!data) return;
+    
+    data->editor = editor;
+    data->parent = parent_hwnd;
     
     // Register a simple window class
     WNDCLASSEXA wc = {0};
@@ -210,53 +232,57 @@ void search_show_dialog(HWND parent_hwnd, Editor *editor) {
     
     if (!g_find_dialog) {
         MessageBoxA(parent_hwnd, ERR_FAILED_FIND_DIALOG, DLG_ERROR, MB_ICONERROR);
+        free(data);
         return;
     }
-    
+
+    // Store per-instance data (BUG #010 fix)
+    SetWindowLongPtr(g_find_dialog, GWLP_USERDATA, (LONG_PTR)data);
+
     // Create Static "Find what:" label
     CreateWindowExA(0, "STATIC", "Fi&nd what:",
         WS_CHILD | WS_VISIBLE | SS_LEFT,
         10, 12, 60, 15,
         g_find_dialog, NULL, NULL, NULL);
-    
-    // Create Edit control
-    g_find_edit = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", g_find_text,
+
+    // Create Edit control (use per-instance text)
+    data->edit_ctrl = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", data->find_text,
         WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | WS_TABSTOP,
         75, 8, 180, 22,
         g_find_dialog, (HMENU)100, NULL, NULL);
-    
+
     // Create "Find Next" button
     CreateWindowExA(0, "BUTTON", "&Find Next",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
         260, 8, 75, 23,
         g_find_dialog, (HMENU)101, NULL, NULL);
-    
+
     // Create "Match case" checkbox
     CreateWindowExA(0, "BUTTON", "&Match case",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP,
         75, 35, 100, 18,
         g_find_dialog, (HMENU)103, NULL, NULL);
-    
-    if (g_find_match_case) {
+
+    if (data->match_case) {
         SendDlgItemMessage(g_find_dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
     }
-    
+
     // Create Close button
     CreateWindowExA(0, "BUTTON", "Close",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
         260, 35, 75, 23,
         g_find_dialog, (HMENU)102, NULL, NULL);
-    
+
     // Center dialog on parent
     RECT parent_rect, dialog_rect;
     GetWindowRect(parent_hwnd, &parent_rect);
     GetWindowRect(g_find_dialog, &dialog_rect);
-    
+
     int x = parent_rect.left + (parent_rect.right - parent_rect.left - (dialog_rect.right - dialog_rect.left)) / 2;
     int y = parent_rect.top + (parent_rect.bottom - parent_rect.top - (dialog_rect.bottom - dialog_rect.top)) / 2;
-    
+
     SetWindowPos(g_find_dialog, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
     
     ShowWindow(g_find_dialog, SW_SHOW);
-    SetFocus(g_find_edit);
+    SetFocus(data->edit_ctrl);
 }

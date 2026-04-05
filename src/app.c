@@ -488,9 +488,16 @@ void app_on_command(App *app, WPARAM wParam) {
             
         case ID_VIEW_WORDWRAP:
             app->word_wrap = !app->word_wrap;
-            CheckMenuItem(app->menu, ID_VIEW_WORDWRAP, 
+            CheckMenuItem(app->menu, ID_VIEW_WORDWRAP,
                          app->word_wrap ? MF_CHECKED : MF_UNCHECKED);
-            // TODO: Implement word wrap
+            // BUG #007 Fix: Inform user word wrap is not yet implemented
+            MessageBoxA(app->hwnd,
+                       MSG_WORD_WRAP_NOT_IMPLEMENTED,
+                       DLG_FASTPAD,
+                       MB_ICONINFORMATION);
+            // Reset checkbox since feature is not implemented
+            app->word_wrap = false;
+            CheckMenuItem(app->menu, ID_VIEW_WORDWRAP, MF_UNCHECKED);
             break;
             
         case ID_VIEW_STATUSBAR:
