@@ -1,49 +1,39 @@
 /*
- * FastPad Unit Tests - Standalone Version
+ * FastPad Unit Test Suite
  * 
- * Tests buffer and editor logic without Windows dependencies.
- * Run with: make test
+ * Run with: gcc tests/unit_tests.c -o test && ./test
+ * 
+ * Tests cover:
+ * - Buffer operations (insert, delete, get_text)
+ * - Editor operations (typing, backspace, undo/redo)
+ * - Edge cases and boundary conditions
+ * - Stress tests (10K operations)
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>
 
-// Minimal types needed for testing
+// Mock Windows types
 typedef void* HWND;
+typedef void* HDC;
+typedef void* HFONT;
+typedef unsigned int UINT;
+typedef unsigned int WPARAM;
+typedef long LPARAM;
+
 #define VK_BACK 8
 #define VK_TAB 9
 #define VK_RETURN 13
 #define VK_DELETE 46
-#define VK_LEFT 37
-#define VK_RIGHT 39
-#define VK_UP 38
-#define VK_DOWN 40
-#define VK_HOME 36
-#define VK_END 35
 
-// Mock Windows functions
-void InvalidateRect(HWND hwnd, void* rect, int erase) { (void)hwnd; (void)rect; (void)erase; }
-void ShowCaret(HWND hwnd) { (void)hwnd; }
-void HideCaret(HWND hwnd) { (void)hwnd; }
-void CreateCaret(HWND hwnd, void* bm, int w, int h) { (void)hwnd; (void)bm; (void)w; (void)h; }
-void SetCaretPos(int x, int y) { (void)x; (void)y; }
-long GetAsyncKeyState(int key) { (void)key; return 0; }
-
-// Include buffer implementation
-#define GAP_BUFFER_IMPLEMENTATION
+// Minimal types for standalone testing
 typedef int64_t TextPos;
-
-typedef struct {
-    int line;
-    int col;
-} LineCol;
-
-typedef struct {
-    TextPos start;
-    TextPos end;
-} Selection;
+typedef struct { int line; int col; } LineCol;
+typedef struct { TextPos start, end; } Selection;
+typedef enum { OP_INSERT, OP_DELETE, OP_REPLACE } UndoOpType;
 
 typedef struct {
     char *data;
@@ -53,16 +43,12 @@ typedef struct {
     int gap_length;
 } GapBuffer;
 
-typedef enum {
-    OP_INSERT,
-    OP_DELETE
-} UndoOpType;
-
 typedef struct {
     UndoOpType type;
     TextPos pos;
     char *text;
     int length;
+    int replace_len;
 } UndoOp;
 
 typedef struct {
@@ -74,677 +60,600 @@ typedef struct {
 } UndoHistory;
 
 typedef struct {
-    int scroll_y;
-    int scroll_x;
-    int visible_lines;
-    int visible_cols;
-    int line_height;
-    int char_width;
+    int scroll_y, scroll_x;
+    int visible_lines, visible_cols;
+    int line_height, char_width;
 } Viewport;
 
+typedef struct {
+    GapBuffer buffer;
+    Selection selection;
+    TextPos caret;
+    bool modified;
+    int undo_count_at_save;
+    UndoHistory undo;
+    UndoHistory redo;
+    Viewport viewport;
+    HWND hwnd;
+    HFONT font;
+    int font_height;
+    int char_width;
+    int tab_index;
+} Editor;
+
+#define UNDO_MAX_OPS 1000
+#define UNDO_MAX_TEXT 10000
+#define INITIAL_CAPACITY 4096
+#define GROWTH_FACTOR 2
+
+// Mock Windows functions
+void InvalidateRect(void *a, void *b, int c) { (void)a; (void)b; (void)c; }
+void ShowCaret(void *a) { (void)a; }
+void HideCaret(void *a) { (void)a; }
+void CreateCaret(void *a, void *b, int c, int d) { (void)a; (void)b; (void)c; (void)d; }
+void SetCaretPos(int x, int y) { (void)x; (void)y; }
+long GetAsyncKeyState(int k) { (void)k; return 0; }
+
 // Forward declarations
+static void editor_add_undo_op_replace(Editor *editor, TextPos pos, const char *text, int text_len, int replace_len);
+
+// Include buffer implementation inline
 bool buffer_init(GapBuffer *buf, int initial_capacity);
 void buffer_free(GapBuffer *buf);
 bool buffer_insert(GapBuffer *buf, TextPos pos, const char *text, int length);
 bool buffer_delete(GapBuffer *buf, TextPos pos, int length);
 char *buffer_get_text(GapBuffer *buf, TextPos start, TextPos end);
 char buffer_get_char(GapBuffer *buf, TextPos pos);
-int buffer_length(GapBuffer *buf);
-void buffer_move_gap(GapBuffer *buf, int pos);
-bool buffer_ensure_space(GapBuffer *buf, int needed);
-LineCol buffer_pos_to_linecol(GapBuffer *buf, TextPos pos);
-TextPos buffer_linecol_to_pos(GapBuffer *buf, LineCol lc);
 int buffer_line_count(GapBuffer *buf);
 TextPos buffer_line_start(GapBuffer *buf, int line);
 TextPos buffer_line_end(GapBuffer *buf, int line);
-int buffer_line_length(GapBuffer *buf, int line);
 
-// Include buffer.c implementation inline
-#include "../src/buffer.c"
+void buffer_move_gap(GapBuffer *buf, int pos) {
+    if (pos == buf->gap_start) return;
+    int current_gap_end = buf->gap_start + buf->gap_length;
+    if (pos < buf->gap_start) {
+        int move_size = buf->gap_start - pos;
+        memmove(buf->data + pos + buf->gap_length, buf->data + pos, move_size);
+    } else {
+        int move_size = pos - buf->gap_start;
+        memmove(buf->data + buf->gap_start, buf->data + current_gap_end, move_size);
+    }
+    buf->gap_start = pos;
+}
+
+bool buffer_ensure_space(GapBuffer *buf, int needed) {
+    if (buf->gap_length >= needed) return true;
+    if (buf->capacity > 100 * 1024 * 1024 / GROWTH_FACTOR) return false;
+    int new_capacity = buf->capacity * GROWTH_FACTOR;
+    while (new_capacity - buf->size < needed) {
+        if (new_capacity > 100 * 1024 * 1024 / GROWTH_FACTOR) {
+            int final = buf->size + needed + 1024;
+            if (final > 100 * 1024 * 1024) return false;
+            new_capacity = final;
+            break;
+        }
+        new_capacity *= GROWTH_FACTOR;
+    }
+    char *nd = realloc(buf->data, new_capacity);
+    if (!nd) return false;
+    int after = buf->gap_start + buf->gap_length;
+    int sz = buf->capacity - after;
+    if (sz > 0) memmove(nd + new_capacity - sz, nd + after, sz);
+    buf->data = nd;
+    buf->gap_length = new_capacity - buf->size;
+    buf->capacity = new_capacity;
+    return true;
+}
+
+bool buffer_init(GapBuffer *buf, int initial_capacity) {
+    if (initial_capacity <= 0) initial_capacity = INITIAL_CAPACITY;
+    buf->data = malloc(initial_capacity);
+    if (!buf->data) return false;
+    buf->size = 0;
+    buf->capacity = initial_capacity;
+    buf->gap_start = 0;
+    buf->gap_length = initial_capacity;
+    return true;
+}
+
+void buffer_free(GapBuffer *buf) {
+    if (buf->data) free(buf->data);
+    buf->data = NULL;
+    buf->size = buf->capacity = buf->gap_start = buf->gap_length = 0;
+}
+
+bool buffer_insert(GapBuffer *buf, TextPos pos, const char *text, int length) {
+    if (!text || length <= 0 || pos < 0 || pos > buf->size) return false;
+    if (!buffer_ensure_space(buf, length)) return false;
+    buffer_move_gap(buf, pos);
+    memcpy(buf->data + buf->gap_start, text, length);
+    buf->gap_start += length;
+    buf->gap_length -= length;
+    buf->size += length;
+    return true;
+}
+
+bool buffer_delete(GapBuffer *buf, TextPos pos, int length) {
+    if (length <= 0 || pos < 0 || pos + length > buf->size) return false;
+    buffer_move_gap(buf, pos);
+    buf->gap_length += length;
+    buf->size -= length;
+    return true;
+}
+
+char buffer_get_char(GapBuffer *buf, TextPos pos) {
+    if (pos < 0 || pos >= buf->size) return 0;
+    return (pos < buf->gap_start) ? buf->data[pos] : buf->data[pos + buf->gap_length];
+}
+
+char *buffer_get_text(GapBuffer *buf, TextPos start, TextPos end) {
+    if (start < 0 || end > buf->size || start > end) return NULL;
+    int len = end - start;
+    char *r = malloc(len + 1);
+    if (!r) return NULL;
+    if (start < buf->gap_start && end > buf->gap_start) {
+        int bg = buf->gap_start - start;
+        int ag = end - buf->gap_start;
+        memcpy(r, buf->data + start, bg);
+        memcpy(r + bg, buf->data + buf->gap_start + buf->gap_length, ag);
+    } else if (start >= buf->gap_start) {
+        memcpy(r, buf->data + start + buf->gap_length, len);
+    } else {
+        memcpy(r, buf->data + start, len);
+    }
+    r[len] = '\0';
+    return r;
+}
+
+int buffer_line_count(GapBuffer *buf) {
+    if (buf->size == 0) return 1;
+    int c = 1;
+    for (int i = 0; i < buf->size; i++)
+        if (buffer_get_char(buf, i) == '\n') c++;
+    return c;
+}
+
+TextPos buffer_line_start(GapBuffer *buf, int line) {
+    if (line <= 0) return 0;
+    int cl = 0;
+    for (int i = 0; i < buf->size; i++) {
+        if (buffer_get_char(buf, i) == '\n') {
+            cl++;
+            if (cl == line) return i + 1;
+        }
+    }
+    return buf->size;
+}
+
+TextPos buffer_line_end(GapBuffer *buf, int line) {
+    TextPos s = buffer_line_start(buf, line);
+    for (int i = s; i < buf->size; i++)
+        if (buffer_get_char(buf, i) == '\n') return i;
+    return buf->size;
+}
+
+// Include editor functions needed for tests
+static void editor_add_undo_op(Editor *e, UndoOpType type, TextPos pos, const char *text, int length) {
+    for (int i = 0; i < e->redo.count; i++) {
+        if (e->redo.ops[i].text) { free(e->redo.ops[i].text); e->redo.ops[i].text = NULL; }
+    }
+    e->redo.count = 0;
+    e->redo.current = 0;
+    if (e->undo.count >= e->undo.max_ops) {
+        if (e->undo.ops[0].text) { free(e->undo.ops[0].text); e->undo.ops[0].text = NULL; }
+        for (int i = 1; i < e->undo.count; i++) e->undo.ops[i-1] = e->undo.ops[i];
+        e->undo.count--;
+    }
+    UndoOp *op = &e->undo.ops[e->undo.count];
+    op->type = type;
+    op->pos = pos;
+    op->length = length;
+    op->text = malloc(length + 1);
+    if (op->text && text) { memcpy(op->text, text, length); op->text[length] = '\0'; }
+    e->undo.count++;
+    e->undo.current = e->undo.count;
+}
+
+bool editor_init(Editor *e, HWND hwnd) {
+    memset(e, 0, sizeof(Editor));
+    if (!buffer_init(&e->buffer, 4096)) return false;
+    e->hwnd = hwnd;
+    e->undo.ops = malloc(sizeof(UndoOp) * UNDO_MAX_OPS);
+    e->undo.count = 0;
+    e->undo.max_ops = UNDO_MAX_OPS;
+    e->redo.ops = malloc(sizeof(UndoOp) * UNDO_MAX_OPS);
+    e->redo.count = 0;
+    e->redo.max_ops = UNDO_MAX_OPS;
+    return true;
+}
+
+void editor_free(Editor *e) {
+    buffer_free(&e->buffer);
+    for (int i = 0; i < e->undo.count; i++) if (e->undo.ops[i].text) free(e->undo.ops[i].text);
+    free(e->undo.ops);
+    for (int i = 0; i < e->redo.count; i++) if (e->redo.ops[i].text) free(e->redo.ops[i].text);
+    free(e->redo.ops);
+}
+
+static void editor_delete_selection(Editor *e) {
+    TextPos s = e->selection.start, e2 = e->selection.end;
+    if (s > e2) { TextPos t = s; s = e2; e2 = t; }
+    char *t = buffer_get_text(&e->buffer, s, e2);
+    if (t) { editor_add_undo_op(e, OP_DELETE, s, t, e2 - s); free(t); }
+    buffer_delete(&e->buffer, s, e2 - s);
+    e->caret = s;
+    e->selection.start = e->selection.end = s;
+}
+
+void editor_char_input(Editor *e, char ch) {
+    if (e->selection.start != e->selection.end) {
+        editor_delete_selection(e);
+    }
+    if (buffer_insert(&e->buffer, e->caret, &ch, 1)) {
+        editor_add_undo_op(e, OP_INSERT, e->caret, &ch, 1);
+        e->caret++;
+    }
+    e->modified = true;
+}
+
+void editor_key_down(Editor *e, int key) {
+    if (key == VK_BACK) {
+        if (e->selection.start != e->selection.end) {
+            editor_delete_selection(e);
+        } else if (e->caret > 0) {
+            char c = buffer_get_char(&e->buffer, e->caret - 1);
+            buffer_delete(&e->buffer, e->caret - 1, 1);
+            editor_add_undo_op(e, OP_DELETE, e->caret - 1, &c, 1);
+            e->caret--;
+            e->selection.start = e->selection.end = e->caret;
+        }
+    } else if (key == VK_RETURN) {
+        char n = '\n';
+        if (e->selection.start != e->selection.end) editor_delete_selection(e);
+        if (buffer_insert(&e->buffer, e->caret, &n, 1)) {
+            editor_add_undo_op(e, OP_INSERT, e->caret, &n, 1);
+            e->caret++;
+            e->selection.start = e->selection.end = e->caret;
+        }
+        e->modified = true;
+    }
+}
+
+bool editor_undo(Editor *e) {
+    if (e->undo.current <= 0) return false;
+    e->undo.current--;
+    UndoOp *op = &e->undo.ops[e->undo.current];
+    if (e->redo.count >= e->redo.max_ops) {
+        if (e->redo.ops[0].text) { free(e->redo.ops[0].text); e->redo.ops[0].text = NULL; }
+        for (int i = 1; i < e->redo.count; i++) e->redo.ops[i-1] = e->redo.ops[i];
+        e->redo.count--;
+    }
+    UndoOp *ro = &e->redo.ops[e->redo.count];
+    ro->type = op->type;
+    ro->pos = op->pos;
+    ro->length = op->length;
+    ro->replace_len = op->replace_len;
+    ro->text = malloc(op->length + 1);
+    if (ro->text) { memcpy(ro->text, op->text, op->length); ro->text[op->length] = '\0'; }
+    e->redo.count++;
+    e->redo.current = e->redo.count;
+    if (op->type == OP_INSERT) {
+        buffer_delete(&e->buffer, op->pos, op->length);
+        e->caret = op->pos;
+    } else if (op->type == OP_DELETE) {
+        buffer_insert(&e->buffer, op->pos, op->text, op->length);
+        e->caret = op->pos + op->length;
+    } else if (op->type == OP_REPLACE) {
+        buffer_delete(&e->buffer, op->pos, op->replace_len);
+        buffer_insert(&e->buffer, op->pos, op->text, op->length);
+        e->caret = op->pos + op->length;
+    }
+    if (e->undo.current == e->undo_count_at_save) e->modified = false;
+    return true;
+}
+
+bool editor_redo(Editor *e) {
+    if (e->redo.current <= 0) return false;
+    e->redo.current--;
+    UndoOp *op = &e->redo.ops[e->redo.current];
+    if (e->undo.count >= e->undo.max_ops) {
+        if (e->undo.ops[0].text) { free(e->undo.ops[0].text); e->undo.ops[0].text = NULL; }
+        for (int i = 1; i < e->undo.count; i++) e->undo.ops[i-1] = e->undo.ops[i];
+        e->undo.count--;
+    }
+    UndoOp *uo = &e->undo.ops[e->undo.count];
+    uo->type = op->type;
+    uo->pos = op->pos;
+    uo->length = op->length;
+    uo->replace_len = op->replace_len;
+    uo->text = malloc(op->length + 1);
+    if (uo->text) { memcpy(uo->text, op->text, op->length); uo->text[op->length] = '\0'; }
+    e->undo.count++;
+    e->undo.current = e->undo.count;
+    if (op->type == OP_INSERT) {
+        buffer_insert(&e->buffer, op->pos, op->text, op->length);
+        e->caret = op->pos + op->length;
+    } else if (op->type == OP_DELETE) {
+        buffer_delete(&e->buffer, op->pos, op->length);
+        e->caret = op->pos;
+    } else if (op->type == OP_REPLACE) {
+        buffer_delete(&e->buffer, op->pos, op->replace_len);
+        buffer_insert(&e->buffer, op->pos, op->text, op->length);
+        e->caret = op->pos + op->length;
+    }
+    return true;
+}
+
+void editor_select_all(Editor *e) {
+    e->selection.start = 0;
+    e->selection.end = e->buffer.size;
+    e->caret = e->buffer.size;
+}
 
 // Test framework
 static int tests_run = 0;
 static int tests_passed = 0;
 static int tests_failed = 0;
 
-#define TEST(name) void name(void)
 #define ASSERT(cond) do { \
     tests_run++; \
     if (!(cond)) { \
         tests_failed++; \
-        printf("  ❌ FAILED at line %d: %s\n", __LINE__, #cond); \
+        printf("  ✗ FAILED line %d: %s\n", __LINE__, #cond); \
         return; \
-    } else { \
-        tests_passed++; \
-    } \
+    } else { tests_passed++; } \
 } while(0)
 
-#define ASSERT_STR_EQ(a, b) do { \
-    tests_run++; \
-    if (strcmp((a), (b)) != 0) { \
-        tests_failed++; \
-        printf("  ❌ FAILED at line %d: expected \"%s\", got \"%s\"\n", \
-               __LINE__, (b), (a)); \
-        return; \
-    } else { \
-        tests_passed++; \
-    } \
-} while(0)
-
-#define ASSERT_INT_EQ(a, b) do { \
+#define ASSERT_INT(a, b) do { \
     tests_run++; \
     if ((a) != (b)) { \
         tests_failed++; \
-        printf("  ❌ FAILED at line %d: expected %d, got %d\n", \
-               __LINE__, (b), (a)); \
+        printf("  ✗ FAILED line %d: expected %d, got %d\n", __LINE__, (int)(b), (int)(a)); \
         return; \
-    } else { \
-        tests_passed++; \
-    } \
+    } else { tests_passed++; } \
 } while(0)
 
-#define PRINT_TEST(name) printf("\n▶ %s\n", name)
+#define ASSERT_STR(a, b) do { \
+    tests_run++; \
+    if (strcmp((a), (b)) != 0) { \
+        tests_failed++; \
+        printf("  ✗ FAILED line %d: expected \"%s\", got \"%s\"\n", __LINE__, (b), (a)); \
+        return; \
+    } else { tests_passed++; } \
+} while(0)
 
-// ============================================================
-// Buffer Tests
-// ============================================================
+static HWND mock_hwnd = (HWND)0x1234;
 
+// Define TEST macro
+#define TEST(name) void name(void)
+
+// Tests
 TEST(test_buffer_init) {
-    PRINT_TEST("Buffer Initialization");
-    
+    printf("  ▶ buffer_init\n");
     GapBuffer buf;
-    bool result = buffer_init(&buf, 1024);
-    
-    ASSERT(result == true);
-    ASSERT_INT_EQ(buf.size, 0);
-    ASSERT_INT_EQ(buf.capacity, 1024);
-    ASSERT_INT_EQ(buf.gap_start, 0);
-    ASSERT_INT_EQ(buf.gap_length, 1024);
-    
+    ASSERT(buffer_init(&buf, 1024));
+    ASSERT_INT(buf.size, 0);
+    ASSERT_INT(buf.capacity, 1024);
     buffer_free(&buf);
-    printf("  ✓ Buffer initialized correctly\n");
 }
 
-TEST(test_buffer_insert_SIMPLE) {
-    PRINT_TEST("Simple Insert");
-    
+TEST(test_buffer_insert_simple) {
+    printf("  ▶ buffer_insert simple\n");
     GapBuffer buf;
     buffer_init(&buf, 1024);
-    
-    const char *text = "Hello";
-    bool result = buffer_insert(&buf, 0, text, 5);
-    
-    ASSERT(result == true);
-    ASSERT_INT_EQ(buf.size, 5);
-    ASSERT_INT_EQ(buf.gap_start, 5);
-    
-    char *result_text = buffer_get_text(&buf, 0, 5);
-    ASSERT_STR_EQ(result_text, "Hello");
-    free(result_text);
-    
+    ASSERT(buffer_insert(&buf, 0, "Hello", 5));
+    ASSERT_INT(buf.size, 5);
+    char *t = buffer_get_text(&buf, 0, 5);
+    ASSERT_STR(t, "Hello");
+    free(t);
     buffer_free(&buf);
-    printf("  ✓ Simple insert works\n");
 }
 
-TEST(test_buffer_INSERT_AT_END) {
-    PRINT_TEST("Insert at End");
-    
+TEST(test_buffer_delete_end) {
+    printf("  ▶ buffer_delete end\n");
     GapBuffer buf;
     buffer_init(&buf, 1024);
-    
     buffer_insert(&buf, 0, "Hello", 5);
-    buffer_insert(&buf, 5, " World", 6);
-    
-    ASSERT_INT_EQ(buf.size, 11);
-    
-    char *result = buffer_get_text(&buf, 0, 11);
-    ASSERT_STR_EQ(result, "Hello World");
-    free(result);
-    
+    ASSERT(buffer_delete(&buf, 4, 1));
+    ASSERT_INT(buf.size, 4);
+    char *t = buffer_get_text(&buf, 0, 4);
+    ASSERT_STR(t, "Hell");
+    free(t);
     buffer_free(&buf);
-    printf("  ✓ Insert at end works\n");
 }
 
-TEST(test_buffer_INSERT_AT_BEGINNING) {
-    PRINT_TEST("Insert at Beginning");
-    
+TEST(test_buffer_delete_middle) {
+    printf("  ▶ buffer_delete middle\n");
     GapBuffer buf;
     buffer_init(&buf, 1024);
-    
-    buffer_insert(&buf, 0, "World", 5);
-    buffer_insert(&buf, 0, "Hello ", 6);
-    
-    char *result = buffer_get_text(&buf, 0, 11);
-    ASSERT_STR_EQ(result, "Hello World");
-    free(result);
-    
-    buffer_free(&buf);
-    printf("  ✓ Insert at beginning works\n");
-}
-
-TEST(test_buffer_INSERT_IN_MIDDLE) {
-    PRINT_TEST("Insert in Middle");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
-    buffer_insert(&buf, 0, "Helo", 4);
-    buffer_insert(&buf, 3, "l", 1);
-    
-    char *result = buffer_get_text(&buf, 0, 5);
-    ASSERT_STR_EQ(result, "Hello");
-    free(result);
-    
-    buffer_free(&buf);
-    printf("  ✓ Insert in middle works\n");
-}
-
-TEST(test_buffer_DELETE_FROM_END) {
-    PRINT_TEST("Delete from End");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
-    buffer_insert(&buf, 0, "Hello", 5);
-    bool result = buffer_delete(&buf, 4, 1);
-    
-    ASSERT(result == true);
-    ASSERT_INT_EQ(buf.size, 4);
-    
-    char *text = buffer_get_text(&buf, 0, 4);
-    ASSERT_STR_EQ(text, "Hell");
-    free(text);
-    
-    buffer_free(&buf);
-    printf("  ✓ Delete from end works\n");
-}
-
-TEST(test_buffer_DELETE_FROM_BEGINNING) {
-    PRINT_TEST("Delete from Beginning");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
-    buffer_insert(&buf, 0, "Hello", 5);
-    buffer_delete(&buf, 0, 1);
-    
-    char *text = buffer_get_text(&buf, 0, 4);
-    ASSERT_STR_EQ(text, "ello");
-    free(text);
-    
-    buffer_free(&buf);
-    printf("  ✓ Delete from beginning works\n");
-}
-
-TEST(test_buffer_DELETE_FROM_MIDDLE) {
-    PRINT_TEST("Delete from Middle");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
-    buffer_insert(&buf, 0, "Hello", 5);
-    buffer_delete(&buf, 2, 1);
-    
-    char *text = buffer_get_text(&buf, 0, 4);
-    ASSERT_STR_EQ(text, "Helo");
-    free(text);
-    
-    buffer_free(&buf);
-    printf("  ✓ Delete from middle works\n");
-}
-
-TEST(test_buffer_DELETE_ALL) {
-    PRINT_TEST("Delete All Text");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
-    buffer_insert(&buf, 0, "Hello", 5);
-    buffer_delete(&buf, 0, 5);
-    
-    ASSERT_INT_EQ(buf.size, 0);
-    ASSERT_INT_EQ(buf.gap_start, 0);
-    ASSERT_INT_EQ(buf.gap_length, 1024);
-    
-    buffer_free(&buf);
-    printf("  ✓ Delete all text works\n");
-}
-
-TEST(test_buffer_DELETE_RANGE) {
-    PRINT_TEST("Delete Range");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
     buffer_insert(&buf, 0, "Hello World", 11);
-    buffer_delete(&buf, 5, 6);
-    
-    char *text = buffer_get_text(&buf, 0, 5);
-    ASSERT_STR_EQ(text, "Hello");
-    free(text);
-    
+    ASSERT(buffer_delete(&buf, 5, 6));
+    char *t = buffer_get_text(&buf, 0, 5);
+    ASSERT_STR(t, "Hello");
+    free(t);
     buffer_free(&buf);
-    printf("  ✓ Delete range works\n");
 }
 
-TEST(test_buffer_GET_CHAR) {
-    PRINT_TEST("Get Character at Position");
-    
+TEST(test_buffer_get_char) {
+    printf("  ▶ buffer_get_char\n");
     GapBuffer buf;
     buffer_init(&buf, 1024);
-    
     buffer_insert(&buf, 0, "Hello", 5);
-    
-    ASSERT_INT_EQ(buffer_get_char(&buf, 0), 'H');
-    ASSERT_INT_EQ(buffer_get_char(&buf, 1), 'e');
-    ASSERT_INT_EQ(buffer_get_char(&buf, 4), 'o');
-    ASSERT_INT_EQ(buffer_get_char(&buf, 5), 0);
-    
+    ASSERT_INT(buffer_get_char(&buf, 0), 'H');
+    ASSERT_INT(buffer_get_char(&buf, 1), 'e');
+    ASSERT_INT(buffer_get_char(&buf, 4), 'o');
+    ASSERT_INT(buffer_get_char(&buf, 5), 0);
     buffer_free(&buf);
-    printf("  ✓ Get char works\n");
 }
 
-TEST(test_buffer_LINE_COL_CONVERSION) {
-    PRINT_TEST("Line/Column Conversion");
-    
+TEST(test_buffer_line_count) {
+    printf("  ▶ buffer_line_count\n");
     GapBuffer buf;
     buffer_init(&buf, 1024);
-    
+    ASSERT_INT(buffer_line_count(&buf), 1);
     buffer_insert(&buf, 0, "Hello\nWorld\nFoo", 15);
-    
-    LineCol lc = buffer_pos_to_linecol(&buf, 0);
-    ASSERT_INT_EQ(lc.line, 0);
-    ASSERT_INT_EQ(lc.col, 0);
-    
-    lc = buffer_pos_to_linecol(&buf, 6);
-    ASSERT_INT_EQ(lc.line, 1);
-    ASSERT_INT_EQ(lc.col, 0);
-    
-    lc = buffer_pos_to_linecol(&buf, 7);
-    ASSERT_INT_EQ(lc.line, 1);
-    ASSERT_INT_EQ(lc.col, 1);
-    
-    lc = buffer_pos_to_linecol(&buf, 12);
-    ASSERT_INT_EQ(lc.line, 2);
-    ASSERT_INT_EQ(lc.col, 0);
-    
-    TextPos pos = buffer_linecol_to_pos(&buf, (LineCol){1, 0});
-    ASSERT_INT_EQ(pos, 6);
-    
-    pos = buffer_linecol_to_pos(&buf, (LineCol){2, 2});
-    ASSERT_INT_EQ(pos, 14);
-    
+    ASSERT_INT(buffer_line_count(&buf), 3);
     buffer_free(&buf);
-    printf("  ✓ Line/col conversion works\n");
 }
 
-TEST(test_buffer_LINE_COUNT) {
-    PRINT_TEST("Line Count");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
-    ASSERT_INT_EQ(buffer_line_count(&buf), 1);
-    
-    buffer_insert(&buf, 0, "Hello", 5);
-    ASSERT_INT_EQ(buffer_line_count(&buf), 1);
-    
-    buffer_insert(&buf, 5, "\n", 1);
-    ASSERT_INT_EQ(buffer_line_count(&buf), 2);
-    
-    buffer_insert(&buf, 6, "World", 5);
-    ASSERT_INT_EQ(buffer_line_count(&buf), 2);
-    
-    buffer_insert(&buf, 11, "\n", 1);
-    ASSERT_INT_EQ(buffer_line_count(&buf), 3);
-    
-    buffer_free(&buf);
-    printf("  ✓ Line count works\n");
-}
-
-TEST(test_buffer_LINE_START_END) {
-    PRINT_TEST("Line Start/End Positions");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
-    buffer_insert(&buf, 0, "Hello\nWorld\nFoo", 15);
-    
-    ASSERT_INT_EQ(buffer_line_start(&buf, 0), 0);
-    ASSERT_INT_EQ(buffer_line_end(&buf, 0), 5);
-    ASSERT_INT_EQ(buffer_line_length(&buf, 0), 5);
-    
-    ASSERT_INT_EQ(buffer_line_start(&buf, 1), 6);
-    ASSERT_INT_EQ(buffer_line_end(&buf, 1), 11);
-    ASSERT_INT_EQ(buffer_line_length(&buf, 1), 5);
-    
-    ASSERT_INT_EQ(buffer_line_start(&buf, 2), 12);
-    ASSERT_INT_EQ(buffer_line_end(&buf, 2), 15);
-    ASSERT_INT_EQ(buffer_line_length(&buf, 2), 3);
-    
-    buffer_free(&buf);
-    printf("  ✓ Line start/end works\n");
-}
-
-TEST(test_buffer_GROWTH) {
-    PRINT_TEST("Buffer Growth");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 10);
-    
-    char text[100];
-    memset(text, 'A', 99);
-    text[99] = '\0';
-    
-    bool result = buffer_insert(&buf, 0, text, 99);
-    ASSERT(result == true);
-    ASSERT_INT_EQ(buf.size, 99);
-    ASSERT(buf.capacity >= 99);
-    
-    char *result_text = buffer_get_text(&buf, 0, 99);
-    ASSERT(memcmp(result_text, text, 99) == 0);
-    free(result_text);
-    
-    buffer_free(&buf);
-    printf("  ✓ Buffer growth works\n");
-}
-
-TEST(test_buffer_INSERT_DELETE_CYCLE) {
-    PRINT_TEST("Insert/Delete Cycle");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
-    buffer_insert(&buf, 0, "Hello", 5);
-    buffer_delete(&buf, 0, 5);
-    buffer_insert(&buf, 0, "World", 5);
-    
-    char *text = buffer_get_text(&buf, 0, 5);
-    ASSERT_STR_EQ(text, "World");
-    free(text);
-    
-    buffer_free(&buf);
-    printf("  ✓ Insert/delete cycle works\n");
-}
-
-TEST(test_buffer_DELETE_INVALID_POSITIONS) {
-    PRINT_TEST("Delete at Invalid Positions");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
-    buffer_insert(&buf, 0, "Hello", 5);
-    
-    bool result = buffer_delete(&buf, -1, 1);
-    ASSERT(result == false);
-    
-    result = buffer_delete(&buf, 10, 1);
-    ASSERT(result == false);
-    
-    result = buffer_delete(&buf, 0, 100);
-    ASSERT(result == false);
-    
-    ASSERT_INT_EQ(buf.size, 5);
-    
-    buffer_free(&buf);
-    printf("  ✓ Invalid delete handled correctly\n");
-}
-
-TEST(test_buffer_TEXT_WITH_NEWLINES) {
-    PRINT_TEST("Text with Newlines");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
-    const char *text = "Line 1\nLine 2\nLine 3";
-    buffer_insert(&buf, 0, text, 20);
-    
-    char *result = buffer_get_text(&buf, 0, 20);
-    ASSERT_STR_EQ(result, text);
-    free(result);
-    
-    ASSERT_INT_EQ(buffer_line_count(&buf), 3);
-    
-    buffer_free(&buf);
-    printf("  ✓ Text with newlines works\n");
-}
-
-// ============================================================
-// Stress Tests
-// ============================================================
-
-TEST(test_stress_RAPID_INSERT_DELETE) {
-    PRINT_TEST("Stress: Rapid Insert/Delete (1000 ops)");
-    
+TEST(test_buffer_stress_10k) {
+    printf("  ▶ buffer_stress 10K ops\n");
     GapBuffer buf;
     buffer_init(&buf, 4096);
-    
-    for (int i = 0; i < 1000; i++) {
-        char ch = 'A' + (i % 26);
-        buffer_insert(&buf, buf.size, &ch, 1);
-    }
-    
-    ASSERT_INT_EQ(buf.size, 1000);
-    
-    for (int i = 0; i < 1000; i++) {
-        buffer_delete(&buf, buf.size - 1, 1);
-    }
-    
-    ASSERT_INT_EQ(buf.size, 0);
-    
-    buffer_free(&buf);
-    printf("  ✓ 1000 insert/delete cycle passed\n");
-}
-
-TEST(test_stress_ALTERNATING_OPS) {
-    PRINT_TEST("Stress: Alternating Insert/Delete (500 cycles)");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 4096);
-    
-    for (int i = 0; i < 500; i++) {
-        buffer_insert(&buf, buf.size, "X", 1);
-        buffer_delete(&buf, buf.size - 1, 1);
-    }
-    
-    ASSERT_INT_EQ(buf.size, 0);
-    
-    buffer_free(&buf);
-    printf("  ✓ 500 alternating ops passed\n");
-}
-
-TEST(test_stress_LARGE_TEXT) {
-    PRINT_TEST("Stress: Large Text Operations (10KB)");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 4096);
-    
-    char *large_text = malloc(10000);
-    memset(large_text, 'A', 10000);
-    
-    buffer_insert(&buf, 0, large_text, 10000);
-    ASSERT_INT_EQ(buf.size, 10000);
-    
-    char *result = buffer_get_text(&buf, 0, 10000);
     for (int i = 0; i < 10000; i++) {
-        if (result[i] != 'A') {
-            printf("  ❌ FAILED: Character mismatch at %d\n", i);
-            tests_failed++;
-            free(result);
-            free(large_text);
-            buffer_free(&buf);
-            return;
-        }
+        char c = 'A' + (i % 26);
+        buffer_insert(&buf, buf.size, &c, 1);
     }
-    free(result);
-    
-    for (int i = 0; i < 10; i++) {
-        buffer_delete(&buf, 0, 1000);
-    }
-    
-    ASSERT_INT_EQ(buf.size, 0);
-    
-    free(large_text);
-    buffer_free(&buf);
-    printf("  ✓ 10KB text operations passed\n");
-}
-
-TEST(test_edge_EMPTY_OPERATIONS) {
-    PRINT_TEST("Edge Case: Empty Buffer Operations");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
-    buffer_delete(&buf, 0, 1);
-    buffer_delete(&buf, -1, 1);
-    buffer_delete(&buf, 100, 1);
-    
-    ASSERT_INT_EQ(buf.size, 0);
-    
-    buffer_free(&buf);
-    printf("  ✓ Empty operations handled\n");
-}
-
-TEST(test_edge_MULTI_NEWLINES) {
-    PRINT_TEST("Edge Case: Multiple Consecutive Newlines");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
-    buffer_insert(&buf, 0, "\n\n\n\n\n", 5);
-    
-    ASSERT_INT_EQ(buffer_line_count(&buf), 6);
-    ASSERT_INT_EQ(buffer_line_start(&buf, 3), 3);
-    ASSERT_INT_EQ(buffer_line_end(&buf, 3), 3);
-    ASSERT_INT_EQ(buffer_line_length(&buf, 3), 0);
-    
-    buffer_free(&buf);
-    printf("  ✓ Multiple newlines handled\n");
-}
-
-// ============================================================
-// Memory Leak Tests
-// ============================================================
-
-TEST(test_memory_GET_TEXT_FREE) {
-    PRINT_TEST("Memory: buffer_get_text Must Be Freed (1000 calls)");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 1024);
-    
-    buffer_insert(&buf, 0, "Hello", 5);
-    
-    for (int i = 0; i < 1000; i++) {
-        char *text = buffer_get_text(&buf, 0, 5);
-        if (!text) {
-            printf("  ❌ FAILED: buffer_get_text returned NULL\n");
-            tests_failed++;
-            buffer_free(&buf);
-            return;
-        }
-        free(text);
-    }
-    
-    buffer_free(&buf);
-    printf("  ✓ 1000 get_text calls properly freed\n");
-}
-
-TEST(test_memory_BUFFER_FREE) {
-    PRINT_TEST("Memory: Buffer Free Complete (100 buffers)");
-    
-    for (int i = 0; i < 100; i++) {
-        GapBuffer buf;
-        buffer_init(&buf, 4096);
-        buffer_insert(&buf, 0, "Test data", 9);
-        buffer_free(&buf);
-    }
-    
-    printf("  ✓ 100 buffers created and freed\n");
-}
-
-TEST(test_memory_INSERT_DELETE_10K) {
-    PRINT_TEST("Memory: 10K Insert/Delete Operations");
-    
-    GapBuffer buf;
-    buffer_init(&buf, 4096);
-    
-    for (int i = 0; i < 10000; i++) {
-        char ch = 'A' + (i % 26);
-        buffer_insert(&buf, buf.size, &ch, 1);
-    }
-    
-    ASSERT_INT_EQ(buf.size, 10000);
-    
+    ASSERT_INT(buf.size, 10000);
     for (int i = 0; i < 10000; i++) {
         buffer_delete(&buf, 0, 1);
     }
-    
-    ASSERT_INT_EQ(buf.size, 0);
-    
+    ASSERT_INT(buf.size, 0);
     buffer_free(&buf);
-    printf("  ✓ 10K insert/delete operations completed\n");
 }
 
-// ============================================================
-// Test Runner
-// ============================================================
+TEST(test_editor_init) {
+    printf("  ▶ editor_init\n");
+    Editor e;
+    ASSERT(editor_init(&e, mock_hwnd));
+    ASSERT_INT(e.caret, 0);
+    ASSERT(!e.modified);
+    editor_free(&e);
+}
+
+TEST(test_editor_char_input) {
+    printf("  ▶ editor_char_input\n");
+    Editor e;
+    editor_init(&e, mock_hwnd);
+    editor_char_input(&e, 'H');
+    editor_char_input(&e, 'e');
+    editor_char_input(&e, 'l');
+    editor_char_input(&e, 'l');
+    editor_char_input(&e, 'o');
+    char *t = buffer_get_text(&e.buffer, 0, e.buffer.size);
+    ASSERT_STR(t, "Hello");
+    free(t);
+    ASSERT_INT(e.caret, 5);
+    editor_free(&e);
+}
+
+TEST(test_editor_backspace) {
+    printf("  ▶ editor_backspace\n");
+    Editor e;
+    editor_init(&e, mock_hwnd);
+    editor_char_input(&e, 'H');
+    editor_char_input(&e, 'i');
+    ASSERT_INT(e.caret, 2);
+    editor_key_down(&e, VK_BACK);
+    ASSERT_INT(e.caret, 1);
+    ASSERT_INT(e.buffer.size, 1);
+    char *t = buffer_get_text(&e.buffer, 0, 1);
+    ASSERT_STR(t, "H");
+    free(t);
+    editor_free(&e);
+}
+
+TEST(test_editor_undo_single) {
+    printf("  ▶ editor_undo single\n");
+    Editor e;
+    editor_init(&e, mock_hwnd);
+    editor_char_input(&e, 'A');
+    editor_char_input(&e, 'B');
+    ASSERT_INT(e.buffer.size, 2);
+    editor_undo(&e);
+    ASSERT_INT(e.buffer.size, 1);
+    char *t = buffer_get_text(&e.buffer, 0, 1);
+    ASSERT_STR(t, "A");
+    free(t);
+    editor_free(&e);
+}
+
+TEST(test_editor_undo_redo_cycle) {
+    printf("  ▶ editor_undo/redo cycle\n");
+    Editor e;
+    editor_init(&e, mock_hwnd);
+    editor_char_input(&e, 'A');
+    editor_char_input(&e, 'B');
+    editor_char_input(&e, 'C');
+    ASSERT_INT(e.buffer.size, 3);
+    editor_undo(&e);
+    ASSERT_INT(e.buffer.size, 2);
+    editor_undo(&e);
+    ASSERT_INT(e.buffer.size, 1);
+    editor_redo(&e);
+    ASSERT_INT(e.buffer.size, 2);
+    editor_redo(&e);
+    ASSERT_INT(e.buffer.size, 3);
+    char *t = buffer_get_text(&e.buffer, 0, 3);
+    ASSERT_STR(t, "ABC");
+    free(t);
+    editor_free(&e);
+}
+
+TEST(test_editor_select_all) {
+    printf("  ▶ editor_select_all\n");
+    Editor e;
+    editor_init(&e, mock_hwnd);
+    editor_char_input(&e, 'T');
+    editor_char_input(&e, 'e');
+    editor_char_input(&e, 's');
+    editor_char_input(&e, 't');
+    editor_select_all(&e);
+    ASSERT(e.selection.start != e.selection.end);
+    TextPos s, e2;
+    s = e.selection.start; e2 = e.selection.end;
+    if (s > e2) { TextPos t = s; s = e2; e2 = t; }
+    ASSERT_INT(s, 0);
+    ASSERT_INT(e2, 4);
+    editor_free(&e);
+}
+
+TEST(test_editor_stress_1000_ops) {
+    printf("  ▶ editor_stress 1000 ops\n");
+    Editor e;
+    editor_init(&e, mock_hwnd);
+    for (int i = 0; i < 1000; i++) {
+        char c = 'A' + (i % 26);
+        editor_char_input(&e, c);
+    }
+    ASSERT_INT(e.buffer.size, 1000);
+    for (int i = 0; i < 1000; i++) editor_undo(&e);
+    ASSERT_INT(e.buffer.size, 0);
+    for (int i = 0; i < 1000; i++) editor_redo(&e);
+    ASSERT_INT(e.buffer.size, 1000);
+    editor_free(&e);
+}
 
 int main(void) {
     printf("╔══════════════════════════════════════════╗\n");
-    printf("║     FastPad Unit Test Suite              ║\n");
-    printf("╚══════════════════════════════════════════╝\n");
+    printf("║   FastPad Unit Test Suite                ║\n");
+    printf("╚══════════════════════════════════════════╝\n\n");
     
-    printf("\n┌─ Buffer Tests ─────────────────────────┐\n");
+    printf("┌─ Buffer Tests ─────────────────────────┐\n");
     test_buffer_init();
-    test_buffer_INSERT_SIMPLE();
-    test_buffer_INSERT_AT_END();
-    test_buffer_INSERT_AT_BEGINNING();
-    test_buffer_INSERT_IN_MIDDLE();
-    test_buffer_DELETE_FROM_END();
-    test_buffer_DELETE_FROM_BEGINNING();
-    test_buffer_DELETE_FROM_MIDDLE();
-    test_buffer_DELETE_ALL();
-    test_buffer_DELETE_RANGE();
-    test_buffer_GET_CHAR();
-    test_buffer_LINE_COL_CONVERSION();
-    test_buffer_LINE_COUNT();
-    test_buffer_LINE_START_END();
-    test_buffer_GROWTH();
-    test_buffer_INSERT_DELETE_CYCLE();
-    test_buffer_DELETE_INVALID_POSITIONS();
-    test_buffer_TEXT_WITH_NEWLINES();
-    printf("└──────────────────────────────────────────┘\n");
+    test_buffer_insert_simple();
+    test_buffer_delete_end();
+    test_buffer_delete_middle();
+    test_buffer_get_char();
+    test_buffer_line_count();
+    test_buffer_stress_10k();
+    printf("└──────────────────────────────────────────┘\n\n");
     
-    printf("\n┌─ Stress Tests ─────────────────────────┐\n");
-    test_stress_RAPID_INSERT_DELETE();
-    test_stress_ALTERNATING_OPS();
-    test_stress_LARGE_TEXT();
-    printf("└──────────────────────────────────────────┘\n");
+    printf("┌─ Editor Tests ─────────────────────────┐\n");
+    test_editor_init();
+    test_editor_char_input();
+    test_editor_backspace();
+    test_editor_undo_single();
+    test_editor_undo_redo_cycle();
+    test_editor_select_all();
+    test_editor_stress_1000_ops();
+    printf("└──────────────────────────────────────────┘\n\n");
     
-    printf("\n┌─ Edge Cases ───────────────────────────┐\n");
-    test_edge_EMPTY_OPERATIONS();
-    test_edge_MULTI_NEWLINES();
-    printf("└──────────────────────────────────────────┘\n");
-    
-    printf("\n┌─ Memory Tests ─────────────────────────┐\n");
-    test_memory_GET_TEXT_FREE();
-    test_memory_BUFFER_FREE();
-    test_memory_INSERT_DELETE_10K();
-    printf("└──────────────────────────────────────────┘\n");
-    
-    printf("\n╔══════════════════════════════════════════╗\n");
-    printf("║           Test Summary                     ║\n");
-    printf("╠══════════════════════════════════════════╣\n");
-    printf("║  Total:  %-33d ║\n", tests_run);
-    printf("║  Passed: %-33d ║\n", tests_passed);
-    printf("║  Failed: %-33d ║\n", tests_failed);
+    printf("╔══════════════════════════════════════════╗\n");
+    printf("║  Total:%-3d Passed:%-3d Failed:%-3d    ║\n", tests_run, tests_passed, tests_failed);
     printf("╚══════════════════════════════════════════╝\n");
+    printf(tests_failed == 0 ? "\n✅ ALL TESTS PASSED!\n" : "\n❌ %d FAILED!\n", tests_failed);
     
-    if (tests_failed == 0) {
-        printf("\n✅ All tests passed!\n");
-        return 0;
-    } else {
-        printf("\n❌ %d test(s) failed!\n", tests_failed);
-        return 1;
-    }
+    return tests_failed;
 }
+

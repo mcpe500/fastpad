@@ -156,6 +156,25 @@ static void editor_add_undo_op_replace(Editor *editor, TextPos pos, const char *
     editor->undo.current = editor->undo.count;
 }
 
+// BUG #021 Fix: Extract selection deletion into helper function
+// Deletes current selection and logs it as OP_DELETE undo operation
+static void editor_delete_selection(Editor *editor) {
+    TextPos start, end;
+    editor_get_selection(editor, &start, &end);
+    int sel_length = end - start;
+
+    char *deleted_text = buffer_get_text(&editor->buffer, start, end);
+    if (deleted_text) {
+        editor_add_undo_op(editor, OP_DELETE, start, deleted_text, sel_length);
+        free(deleted_text);
+    }
+
+    buffer_delete(&editor->buffer, start, sel_length);
+    editor->caret = start;
+    editor->selection.start = start;
+    editor->selection.end = start;
+}
+
 bool editor_has_selection(Editor *editor) {
     return editor->selection.start != editor->selection.end;
 }
@@ -486,33 +505,17 @@ void editor_key_down(Editor *editor, int key) {
             
         case VK_DELETE: {
             if (editor_has_selection(editor)) {
-                TextPos start, end;
-                editor_get_selection(editor, &start, &end);
-                
-                // Save deleted text for undo BEFORE deleting
-                char *deleted_text = buffer_get_text(&editor->buffer, start, end);
-                int deleted_length = end - start;
-                
-                buffer_delete(&editor->buffer, start, deleted_length);
-                
-                if (deleted_text) {
-                    editor_add_undo_op(editor, OP_DELETE, start, deleted_text, deleted_length);
-                    free(deleted_text);
-                }
-                
-                editor->caret = start;
-                editor->selection.start = start;
-                editor->selection.end = start;
+                editor_delete_selection(editor);
             } else if (editor->caret < editor->buffer.size) {
                 // Save character BEFORE deleting from buffer
                 char deleted = buffer_get_char(&editor->buffer, editor->caret);
-                
+
                 // Delete the character
                 buffer_delete(&editor->buffer, editor->caret, 1);
-                
+
                 // Add undo
                 editor_add_undo_op(editor, OP_DELETE, editor->caret, &deleted, 1);
-                
+
                 // Selection stays at caret (doesn't move on delete)
                 editor->selection.start = editor->caret;
                 editor->selection.end = editor->caret;
@@ -525,24 +528,11 @@ void editor_key_down(Editor *editor, int key) {
             
         case VK_RETURN: {
             char newline = '\n';
-            
+
             if (editor_has_selection(editor)) {
-                TextPos start, end;
-                editor_get_selection(editor, &start, &end);
-                
-                char *deleted_text = buffer_get_text(&editor->buffer, start, end);
-                if (deleted_text) {
-                    int deleted_length = end - start;
-                    editor_add_undo_op(editor, OP_DELETE, start, deleted_text, deleted_length);
-                    free(deleted_text);
-                }
-                
-                buffer_delete(&editor->buffer, start, end - start);
-                editor->caret = start;
-                editor->selection.start = start;
-                editor->selection.end = start;
+                editor_delete_selection(editor);
             }
-            
+
             if (buffer_insert(&editor->buffer, editor->caret, &newline, 1)) {
                 editor_add_undo_op(editor, OP_INSERT, editor->caret, &newline, 1);
                 editor->caret++;
@@ -557,24 +547,11 @@ void editor_key_down(Editor *editor, int key) {
             
         case VK_TAB: {
             char tab = '\t';
-            
+
             if (editor_has_selection(editor)) {
-                TextPos start, end;
-                editor_get_selection(editor, &start, &end);
-                
-                char *deleted_text = buffer_get_text(&editor->buffer, start, end);
-                if (deleted_text) {
-                    int deleted_length = end - start;
-                    editor_add_undo_op(editor, OP_DELETE, start, deleted_text, deleted_length);
-                    free(deleted_text);
-                }
-                
-                buffer_delete(&editor->buffer, start, end - start);
-                editor->caret = start;
-                editor->selection.start = start;
-                editor->selection.end = start;
+                editor_delete_selection(editor);
             }
-            
+
             if (buffer_insert(&editor->buffer, editor->caret, &tab, 1)) {
                 editor_add_undo_op(editor, OP_INSERT, editor->caret, &tab, 1);
                 editor->caret++;

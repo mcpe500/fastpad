@@ -7,6 +7,8 @@
 #include <commctrl.h>
 
 #define TAB_BAR_HEIGHT 30
+#define MAX_TABS 20
+#define MSG_BUFFER_SIZE 512
 
 bool tab_manager_init(TabManager *mgr, HWND parent_hwnd) {
     memset(mgr, 0, sizeof(TabManager));
@@ -117,7 +119,7 @@ bool tab_manager_close_tab(TabManager *mgr, int index, bool is_shutting_down) {
 
     // Check for unsaved changes (skip during shutdown)
     if (!is_shutting_down && tab->editor.modified) {
-        char msg[512];
+        char msg[MSG_BUFFER_SIZE];
         snprintf(msg, sizeof(msg), "Save changes to \"%s\"?", tab->title);
 
         int result = MessageBoxA(mgr->parent_hwnd, msg, "FastPad",
