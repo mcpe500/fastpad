@@ -1,5 +1,6 @@
 #include "fileio.h"
 #include "buffer.h"
+#include "errors.h"
 #include <windows.h>
 #include <commdlg.h>
 #include <stdio.h>
@@ -69,13 +70,13 @@ bool file_load(HWND hwnd, const char *filename, GapBuffer *buffer) {
     );
 
     if (hFile == INVALID_HANDLE_VALUE) {
-        MessageBoxA(hwnd, "Failed to open file.", "Error", MB_ICONERROR);
+        MessageBoxA(hwnd, ERR_FAILED_OPEN_FILE, DLG_ERROR, MB_ICONERROR);
         goto cleanup;
     }
 
     DWORD fileSize = GetFileSize(hFile, NULL);
     if (fileSize == INVALID_FILE_SIZE) {
-        MessageBoxA(hwnd, "Failed to read file size.", "Error", MB_ICONERROR);
+        MessageBoxA(hwnd, ERR_FAILED_READ_FILE_SIZE, DLG_ERROR, MB_ICONERROR);
         goto cleanup;
     }
 
@@ -84,22 +85,33 @@ bool file_load(HWND hwnd, const char *filename, GapBuffer *buffer) {
         // Properly reinitialize buffer for empty file
         buffer_free(buffer);
         if (!buffer_init(buffer, 4096)) {
-            MessageBoxA(hwnd, "Out of memory.", "Error", MB_ICONERROR);
+            MessageBoxA(hwnd, ERR_OUT_OF_MEMORY, DLG_ERROR, MB_ICONERROR);
             goto cleanup;
         }
         success = true;
         goto cleanup;
     }
 
+    // Large file warning (BUG #025 fix)
+    if (fileSize > LARGE_FILE_THRESHOLD) {
+        double size_mb = (double)fileSize / (1024.0 * 1024.0);
+        char msg[512];
+        snprintf(msg, sizeof(msg), MSG_LARGE_FILE, size_mb);
+        int result = MessageBoxA(hwnd, msg, DLG_FASTPAD, MB_YESNO | MB_ICONWARNING);
+        if (result == IDNO) {
+            goto cleanup; /* User chose not to open */
+        }
+    }
+
     fileData = (char *)malloc(fileSize);
     if (!fileData) {
-        MessageBoxA(hwnd, "Out of memory.", "Error", MB_ICONERROR);
+        MessageBoxA(hwnd, ERR_OUT_OF_MEMORY, DLG_ERROR, MB_ICONERROR);
         goto cleanup;
     }
 
     DWORD bytesRead;
     if (!ReadFile(hFile, fileData, fileSize, &bytesRead, NULL)) {
-        MessageBoxA(hwnd, "Failed to read file.", "Error", MB_ICONERROR);
+        MessageBoxA(hwnd, ERR_FAILED_READ_FILE, DLG_ERROR, MB_ICONERROR);
         goto cleanup;
     }
 
@@ -122,7 +134,7 @@ bool file_load(HWND hwnd, const char *filename, GapBuffer *buffer) {
     // Initialize buffer with text
     buffer_free(buffer);
     if (!buffer_init(buffer, text_length + 1024)) {
-        MessageBoxA(hwnd, "Out of memory.", "Error", MB_ICONERROR);
+        MessageBoxA(hwnd, ERR_OUT_OF_MEMORY, DLG_ERROR, MB_ICONERROR);
         goto cleanup;
     }
 
@@ -157,7 +169,7 @@ bool file_save(HWND hwnd, const char *filename, GapBuffer *buffer) {
     // Get full text
     char *text = buffer_get_text(buffer, 0, buffer->size);
     if (!text) {
-        MessageBoxA(hwnd, "Failed to get text.", "Error", MB_ICONERROR);
+        MessageBoxA(hwnd, ERR_FAILED_GET_TEXT, DLG_ERROR, MB_ICONERROR);
         return false;
     }
     
@@ -166,7 +178,7 @@ bool file_save(HWND hwnd, const char *filename, GapBuffer *buffer) {
     free(text);
     
     if (!normalized) {
-        MessageBoxA(hwnd, "Out of memory.", "Error", MB_ICONERROR);
+        MessageBoxA(hwnd, ERR_OUT_OF_MEMORY, DLG_ERROR, MB_ICONERROR);
         return false;
     }
     
@@ -184,7 +196,7 @@ bool file_save(HWND hwnd, const char *filename, GapBuffer *buffer) {
     
     if (hFile == INVALID_HANDLE_VALUE) {
         free(normalized);
-        MessageBoxA(hwnd, "Failed to create file.", "Error", MB_ICONERROR);
+        MessageBoxA(hwnd, ERR_FAILED_CREATE_FILE, DLG_ERROR, MB_ICONERROR);
         return false;
     }
     
@@ -194,7 +206,7 @@ bool file_save(HWND hwnd, const char *filename, GapBuffer *buffer) {
     if (!WriteFile(hFile, bom, 3, &bytesWritten, NULL)) {
         free(normalized);
         CloseHandle(hFile);
-        MessageBoxA(hwnd, "Failed to write file.", "Error", MB_ICONERROR);
+        MessageBoxA(hwnd, ERR_FAILED_WRITE_FILE, DLG_ERROR, MB_ICONERROR);
         return false;
     }
     
@@ -202,7 +214,7 @@ bool file_save(HWND hwnd, const char *filename, GapBuffer *buffer) {
     if (!WriteFile(hFile, normalized, normalized_length, &bytesWritten, NULL)) {
         free(normalized);
         CloseHandle(hFile);
-        MessageBoxA(hwnd, "Failed to write file.", "Error", MB_ICONERROR);
+        MessageBoxA(hwnd, ERR_FAILED_WRITE_FILE, DLG_ERROR, MB_ICONERROR);
         return false;
     }
     

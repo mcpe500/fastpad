@@ -5,6 +5,7 @@
 #include "buffer.h"
 #include "search.h"
 #include "tab_manager.h"
+#include "errors.h"
 #include <commctrl.h>
 #include <stdio.h>
 #include <string.h>
@@ -60,7 +61,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             
             // Initialize tab manager (creates first tab automatically)
             if (!tab_manager_init(&app->tab_mgr, hwnd)) {
-                MessageBoxA(hwnd, "Failed to initialize tabs.", "Error", MB_ICONERROR);
+                MessageBoxA(hwnd, ERR_FAILED_INIT_TABS, DLG_ERROR, MB_ICONERROR);
                 return -1;
             }
             
@@ -197,7 +198,7 @@ bool app_init(App *app, HINSTANCE hInstance) {
     wc.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
     
     if (!RegisterClassExA(&wc)) {
-        MessageBoxA(NULL, "Failed to register window class.", "Error", MB_ICONERROR);
+        MessageBoxA(NULL, ERR_FAILED_REGISTER_CLASS, DLG_ERROR, MB_ICONERROR);
         return false;
     }
     
@@ -222,7 +223,7 @@ HWND app_create_window(App *app, HINSTANCE hInstance) {
     );
     
     if (!app->hwnd) {
-        MessageBoxA(NULL, "Failed to create window.", "Error", MB_ICONERROR);
+        MessageBoxA(NULL, ERR_FAILED_CREATE_WINDOW, DLG_ERROR, MB_ICONERROR);
         return NULL;
     }
     

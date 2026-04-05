@@ -1,4 +1,5 @@
 #include "tab_manager.h"
+#include "errors.h"
 #include "editor.h"
 #include "render.h"
 #include "fileio.h"
@@ -64,7 +65,7 @@ void tab_manager_free(TabManager *mgr) {
 int tab_manager_new_tab(TabManager *mgr) {
     if (mgr->count >= MAX_TABS) {
         MessageBoxA(mgr->parent_hwnd, 
-            "Maximum number of tabs reached.",
+            ERR_MAX_TABS_REACHED,
             "FastPad",
             MB_ICONINFORMATION);
         return -1;
@@ -122,7 +123,7 @@ bool tab_manager_close_tab(TabManager *mgr, int index, bool is_shutting_down) {
         char msg[MSG_BUFFER_SIZE];
         snprintf(msg, sizeof(msg), "Save changes to \"%s\"?", tab->title);
 
-        int result = MessageBoxA(mgr->parent_hwnd, msg, "FastPad",
+        int result = MessageBoxA(mgr->parent_hwnd, msg, DLG_FASTPAD,
                                 MB_YESNOCANCEL | MB_ICONQUESTION);
 
         if (result == IDYES) {

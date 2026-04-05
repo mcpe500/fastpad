@@ -1,4 +1,5 @@
 #include "search.h"
+#include "errors.h"
 #include "buffer.h"
 #include "editor.h"
 #include <stdlib.h>
@@ -139,7 +140,7 @@ static LRESULT CALLBACK FindSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
                         // Return focus to parent/editor, not the find dialog
                         SetFocus(g_find_parent);
                     } else {
-                        MessageBoxA(hwnd, "Text not found.", "Find", MB_ICONINFORMATION);
+                        MessageBoxA(hwnd, MSG_TEXT_NOT_FOUND, "Find", MB_ICONINFORMATION);
                     }
                 }
             } else if (id == 102) { // Close button
@@ -208,7 +209,7 @@ void search_show_dialog(HWND parent_hwnd, Editor *editor) {
     );
     
     if (!g_find_dialog) {
-        MessageBoxA(parent_hwnd, "Failed to create find dialog.", "Error", MB_ICONERROR);
+        MessageBoxA(parent_hwnd, ERR_FAILED_FIND_DIALOG, DLG_ERROR, MB_ICONERROR);
         return;
     }
     
