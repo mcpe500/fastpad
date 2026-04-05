@@ -32,15 +32,17 @@ typedef struct {
 // Undo/redo operation types
 typedef enum {
     OP_INSERT,
-    OP_DELETE
+    OP_DELETE,
+    OP_REPLACE  // Replace a range: stores original text + replace_len
 } UndoOpType;
 
 // Undo/redo operation
 typedef struct {
     UndoOpType type;
     TextPos pos;        // position where operation occurred
-    char *text;         // inserted or deleted text
+    char *text;         // inserted or deleted text (or original text for OP_REPLACE)
     int length;         // length of text
+    int replace_len;    // For OP_REPLACE: length of text that was replaced (0 for others)
 } UndoOp;
 
 // Undo/redo history
@@ -68,6 +70,7 @@ typedef struct {
     Selection selection;
     TextPos caret;      // current caret position
     bool modified;      // file has unsaved changes
+    int undo_count_at_save;  // undo.current value when last saved (for modified flag tracking)
     UndoHistory undo;
     UndoHistory redo;
     Viewport viewport;

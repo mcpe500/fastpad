@@ -110,6 +110,50 @@ static void editor_add_undo_op(Editor *editor, UndoOpType type, TextPos pos, con
 
 void editor_set_modified(Editor *editor, bool modified) {
     editor->modified = modified;
+    if (!modified) {
+        // Document is saved - record current undo position as save point
+        editor->undo_count_at_save = editor->undo.current;
+    }
+}
+
+// Helper: Add a replace operation to undo history
+// Replaces `replace_len` chars at `pos` with `text`
+static void editor_add_undo_op_replace(Editor *editor, TextPos pos, const char *text, int text_len, int replace_len) {
+    // Clear redo history
+    for (int i = 0; i < editor->redo.count; i++) {
+        if (editor->redo.ops[i].text) {
+            free(editor->redo.ops[i].text);
+            editor->redo.ops[i].text = NULL;
+        }
+    }
+    editor->redo.count = 0;
+    editor->redo.current = 0;
+
+    // Add to undo history
+    if (editor->undo.count >= editor->undo.max_ops) {
+        if (editor->undo.ops[0].text) {
+            free(editor->undo.ops[0].text);
+            editor->undo.ops[0].text = NULL;
+        }
+        for (int i = 1; i < editor->undo.count; i++) {
+            editor->undo.ops[i-1] = editor->undo.ops[i];
+        }
+        editor->undo.count--;
+    }
+
+    UndoOp *op = &editor->undo.ops[editor->undo.count];
+    op->type = OP_REPLACE;
+    op->pos = pos;
+    op->length = text_len;
+    op->replace_len = replace_len;
+    op->text = (char *)malloc(text_len + 1);
+    if (op->text) {
+        memcpy(op->text, text, text_len);
+        op->text[text_len] = '\0';
+    }
+
+    editor->undo.count++;
+    editor->undo.current = editor->undo.count;
 }
 
 bool editor_has_selection(Editor *editor) {
@@ -145,32 +189,40 @@ void editor_select_all(Editor *editor) {
 }
 
 void editor_char_input(Editor *editor, char ch) {
-    // Delete selection if present
+    // BUG #014 Fix: When typing with a selection, use OP_REPLACE instead of
+    // separate DELETE + INSERT ops. This allows single undo to restore original text.
     if (editor_has_selection(editor)) {
         TextPos start, end;
         editor_get_selection(editor, &start, &end);
-        
-        char *deleted_text = buffer_get_text(&editor->buffer, start, end);
-        if (deleted_text) {
-            int deleted_length = end - start;
-            editor_add_undo_op(editor, OP_DELETE, start, deleted_text, deleted_length);
-            free(deleted_text);
+        int sel_length = end - start;
+
+        // Save original text for undo
+        char *original_text = buffer_get_text(&editor->buffer, start, end);
+
+        // Delete selection and insert character
+        buffer_delete(&editor->buffer, start, sel_length);
+        buffer_insert(&editor->buffer, start, &ch, 1);
+
+        // Create single OP_REPLACE operation (undo will restore original text in one step)
+        if (original_text) {
+            editor_add_undo_op_replace(editor, start, original_text, 1, sel_length);
+            free(original_text);
+        } else {
+            editor_add_undo_op(editor, OP_INSERT, start, &ch, 1);
         }
-        
-        buffer_delete(&editor->buffer, start, end - start);
-        editor->caret = start;
-        editor->selection.start = start;
-        editor->selection.end = start;
+
+        editor->caret = start + 1;
+        editor->selection.start = editor->caret;
+        editor->selection.end = editor->caret;
+    } else {
+        // No selection: normal insert
+        if (buffer_insert(&editor->buffer, editor->caret, &ch, 1)) {
+            editor_add_undo_op(editor, OP_INSERT, editor->caret, &ch, 1);
+            editor->caret++;
+        }
     }
-    
-    // Insert character
-    if (buffer_insert(&editor->buffer, editor->caret, &ch, 1)) {
-        editor_add_undo_op(editor, OP_INSERT, editor->caret, &ch, 1);
-        editor->caret++;
-        editor_clear_selection(editor);
-        editor_set_modified(editor, true);
-    }
-    
+
+    editor_set_modified(editor, true);
     editor_scroll_to_caret(editor);
     InvalidateRect(editor->hwnd, NULL, FALSE);
 }
@@ -744,9 +796,10 @@ bool editor_undo(Editor *editor) {
     }
 
     UndoOp *redo_op = &editor->redo.ops[editor->redo.count];
-    redo_op->type = (op->type == OP_INSERT) ? OP_DELETE : OP_INSERT;
+    redo_op->type = op->type;  // Same type for redo
     redo_op->pos = op->pos;
     redo_op->length = op->length;
+    redo_op->replace_len = op->replace_len;
     redo_op->text = (char *)malloc(op->length + 1);
     if (redo_op->text) {
         memcpy(redo_op->text, op->text, op->length);
@@ -760,10 +813,20 @@ bool editor_undo(Editor *editor) {
         // Undo insert = delete
         buffer_delete(&editor->buffer, op->pos, op->length);
         editor->caret = op->pos;
-    } else {
+    } else if (op->type == OP_DELETE) {
         // Undo delete = insert
         buffer_insert(&editor->buffer, op->pos, op->text, op->length);
         editor->caret = op->pos + op->length;
+    } else if (op->type == OP_REPLACE) {
+        // Undo replace: delete replacement text, restore original text
+        buffer_delete(&editor->buffer, op->pos, op->replace_len);
+        buffer_insert(&editor->buffer, op->pos, op->text, op->length);
+        editor->caret = op->pos + op->length;
+    }
+
+    // Check if we're back at save point
+    if (editor->undo.current == editor->undo_count_at_save) {
+        editor->modified = false;
     }
 
     editor_clear_selection(editor);
@@ -795,9 +858,10 @@ bool editor_redo(Editor *editor) {
     }
 
     UndoOp *undo_op = &editor->undo.ops[editor->undo.count];
-    undo_op->type = (op->type == OP_INSERT) ? OP_DELETE : OP_INSERT;
+    undo_op->type = op->type;  // Same type
     undo_op->pos = op->pos;
     undo_op->length = op->length;
+    undo_op->replace_len = op->replace_len;
     undo_op->text = (char *)malloc(op->length + 1);
     if (undo_op->text) {
         memcpy(undo_op->text, op->text, op->length);
@@ -806,13 +870,18 @@ bool editor_redo(Editor *editor) {
     editor->undo.count++;
     editor->undo.current = editor->undo.count;
 
-    // Execute the redo operation (keep text in redo stack for future redo)
+    // Execute the redo operation
     if (op->type == OP_INSERT) {
         buffer_insert(&editor->buffer, op->pos, op->text, op->length);
         editor->caret = op->pos + op->length;
-    } else {
+    } else if (op->type == OP_DELETE) {
         buffer_delete(&editor->buffer, op->pos, op->length);
         editor->caret = op->pos;
+    } else if (op->type == OP_REPLACE) {
+        // Redo replace: delete replacement, re-insert new text
+        buffer_delete(&editor->buffer, op->pos, op->replace_len);
+        buffer_insert(&editor->buffer, op->pos, op->text, op->length);
+        editor->caret = op->pos + op->length;
     }
 
     editor_clear_selection(editor);
