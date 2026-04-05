@@ -13,7 +13,7 @@ void render_free(Editor *editor);
 void render_calc_metrics(Editor *editor, HDC hdc);
 
 // Paint the editor client area
-void render_paint(Editor *editor, HDC hdc, const RECT *update_rect);
+void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_offset);
 
 // Get line number from y-coordinate
 int render_y_to_line(Editor *editor, int y);

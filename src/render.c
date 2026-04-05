@@ -4,6 +4,65 @@
 
 #define FONT_HEIGHT 16
 #define FONT_WIDTH 8
+#define TAB_SPACES 4  // Number of spaces per tab character
+
+// Helper: expand tab characters to spaces for display
+// Returns newly allocated string with tabs expanded
+// Sets *out_display_length to the display length
+static char *expand_tabs(const char *text, int text_length, int *out_display_length) {
+    // First pass: count display length
+    int display_len = 0;
+    for (int i = 0; i < text_length; i++) {
+        if (text[i] == '\t') {
+            display_len += TAB_SPACES;
+        } else {
+            display_len++;
+        }
+    }
+
+    // Allocate expanded text
+    char *expanded = (char *)malloc(display_len + 1);
+    if (!expanded) {
+        *out_display_length = text_length;
+        return NULL;
+    }
+
+    // Second pass: expand tabs
+    int j = 0;
+    for (int i = 0; i < text_length; i++) {
+        if (text[i] == '\t') {
+            for (int s = 0; s < TAB_SPACES; s++) {
+                expanded[j++] = ' ';
+            }
+        } else {
+            expanded[j++] = text[i];
+        }
+    }
+    expanded[j] = '\0';
+    *out_display_length = display_len;
+    return expanded;
+}
+
+// Helper: calculate visual column of a byte position (expanding tabs)
+static int byte_col_to_display_col(GapBuffer *buf, TextPos byte_start, TextPos byte_pos) {
+    int display_col = 0;
+    for (TextPos i = byte_start; i < byte_pos && i < byte_start + 10000; i++) {
+        char c = buffer_get_char(buf, i);
+        if (c == '\t') {
+            display_col += TAB_SPACES;
+        } else {
+            display_col++;
+        }
+    }
+    return display_col;
+}
+
+// Helper: get the display column of caret within its line
+static int get_caret_display_col(Editor *editor) {
+    LineCol lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
+    TextPos line_start = buffer_line_start(&editor->buffer, lc.line);
+    return byte_col_to_display_col(&editor->buffer, line_start, editor->caret);
+}
 
 bool render_init(Editor *editor) {
     // Create monospace font
@@ -74,7 +133,7 @@ void render_resize(Editor *editor, int width, int height) {
     }
 }
 
-void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
+void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_offset) {
     (void)update_rect;
 
     // Select font
@@ -84,10 +143,6 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
     RECT client_rect;
     GetClientRect(editor->hwnd, &client_rect);
 
-    // Get tab bar height from global app
-    extern App g_app;
-    int tab_height = g_app.tab_mgr.height;
-
     // Fill ENTIRE client area with white background first
     // This prevents ghost characters from appearing
     HBRUSH bg_brush = CreateSolidBrush(RGB(255, 255, 255));
@@ -95,7 +150,10 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
     DeleteObject(bg_brush);
 
     // Adjust client rect for tab bar (only draw text below tab bar)
-    client_rect.top = tab_height;
+    client_rect.top = tab_bar_offset;
+
+    // Get tab bar height for calculations
+    int tab_height = tab_bar_offset;
     
     // Calculate visible line range
     int start_line = editor->viewport.scroll_y;
@@ -120,6 +178,14 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
             continue;
         }
 
+        // Expand tabs for display
+        int display_length = line_length;
+        char *display_text = expand_tabs(line_text, line_length, &display_length);
+        if (!display_text) {
+            display_text = line_text;
+            display_length = line_length;
+        }
+
         // Calculate selection for this line
         TextPos sel_start = editor->selection.start;
         TextPos sel_end = editor->selection.end;
@@ -130,83 +196,85 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
             sel_end = temp;
         }
 
-        // Convert selection positions to line columns
-        TextPos abs_line_start = line_start;
-        TextPos abs_line_end = line_end;
-
+        // Convert selection positions to display columns (accounting for tabs)
         bool has_selection = sel_start < sel_end;
-        int sel_start_col = -1;
-        int sel_end_col = -1;
+        int sel_start_display_col = -1;
+        int sel_end_display_col = -1;
 
-        if (has_selection) {
-            // Check if selection overlaps with this line
-            if (sel_start < abs_line_end && sel_end > abs_line_start) {
-                // Selection overlaps with line
-                sel_start_col = (sel_start > abs_line_start) ? (int)(sel_start - abs_line_start) : 0;
-                sel_end_col = (sel_end < abs_line_end) ? (int)(sel_end - abs_line_start) : line_length;
+        if (has_selection && sel_start < line_end && sel_end > line_start) {
+            // Calculate display column where selection starts/ends within this line
+            TextPos sel_start_in_line = (sel_start > line_start) ? sel_start : line_start;
+            TextPos sel_end_in_line = (sel_end < line_end) ? sel_end : line_end;
 
-                // Draw selection background
-                int x1 = (sel_start_col - editor->viewport.scroll_x) * editor->viewport.char_width;
-                int x2 = (sel_end_col - editor->viewport.scroll_x) * editor->viewport.char_width;
+            sel_start_display_col = byte_col_to_display_col(&editor->buffer, line_start, sel_start_in_line);
+            sel_end_display_col = byte_col_to_display_col(&editor->buffer, line_start, sel_end_in_line);
 
-                if (x2 > x1) {
-                    RECT sel_rect = {
-                        x1,
-                        y,
-                        x2,
-                        y + editor->viewport.line_height
-                    };
+            // Draw selection background using display columns
+            int x1 = (sel_start_display_col - editor->viewport.scroll_x) * editor->viewport.char_width;
+            int x2 = (sel_end_display_col - editor->viewport.scroll_x) * editor->viewport.char_width;
 
-                    HBRUSH sel_brush = CreateSolidBrush(RGB(0, 120, 215));
-                    FillRect(hdc, &sel_rect, sel_brush);
-                    DeleteObject(sel_brush);
-                }
+            if (x2 > x1) {
+                RECT sel_rect = {
+                    x1,
+                    y,
+                    x2,
+                    y + editor->viewport.line_height
+                };
+
+                HBRUSH sel_brush = CreateSolidBrush(RGB(0, 120, 215));
+                FillRect(hdc, &sel_rect, sel_brush);
+                DeleteObject(sel_brush);
             }
         }
 
-        // Draw text - split into segments if there's selection
+        // Draw text using display_text (tabs expanded to spaces)
         int x = -editor->viewport.scroll_x * editor->viewport.char_width;
 
-        if (line_length > 0) {
-            if (has_selection && sel_start_col >= 0 && sel_end_col > sel_start_col) {
+        if (display_length > 0) {
+            if (has_selection && sel_start_display_col >= 0 && sel_end_display_col > sel_start_display_col) {
                 // Draw 3 segments: before selection, selected, after selection
-                
+
                 // Segment 1: Before selection (normal black text)
-                if (sel_start_col > 0) {
+                if (sel_start_display_col > 0) {
                     SetTextColor(hdc, RGB(0, 0, 0));
                     SetBkMode(hdc, TRANSPARENT);
-                    TextOutA(hdc, x, y, line_text, sel_start_col);
+                    TextOutA(hdc, x, y, display_text, sel_start_display_col);
                 }
-                
-                // Segment 2: Selected portion (white text on blue background - already drawn)
+
+                // Segment 2: Selected portion (white text on blue background)
                 SetTextColor(hdc, RGB(255, 255, 255));
                 SetBkMode(hdc, TRANSPARENT);
-                int sel_x = x + sel_start_col * editor->viewport.char_width;
-                TextOutA(hdc, sel_x, y, line_text + sel_start_col, sel_end_col - sel_start_col);
-                
+                int sel_x = x + sel_start_display_col * editor->viewport.char_width;
+                TextOutA(hdc, sel_x, y, display_text + sel_start_display_col, sel_end_display_col - sel_start_display_col);
+
                 // Segment 3: After selection (normal black text)
-                if (sel_end_col < line_length) {
+                if (sel_end_display_col < display_length) {
                     SetTextColor(hdc, RGB(0, 0, 0));
                     SetBkMode(hdc, TRANSPARENT);
-                    int after_x = x + sel_end_col * editor->viewport.char_width;
-                    TextOutA(hdc, after_x, y, line_text + sel_end_col, line_length - sel_end_col);
+                    int after_x = x + sel_end_display_col * editor->viewport.char_width;
+                    TextOutA(hdc, after_x, y, display_text + sel_end_display_col, display_length - sel_end_display_col);
                 }
             } else {
                 // No selection on this line - draw normally
                 SetTextColor(hdc, RGB(0, 0, 0));
                 SetBkMode(hdc, TRANSPARENT);
-                TextOutA(hdc, x, y, line_text, line_length);
+                TextOutA(hdc, x, y, display_text, display_length);
             }
         }
 
         free(line_text);
+        if (display_text != line_text) {
+            free(display_text);
+        }
     }
     
     // Draw caret if window is focused
+    // Use display column (tabs expanded) for correct positioning
     if (GetFocus() == editor->hwnd) {
-        LineCol caret_lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
-        int caret_line = caret_lc.line - editor->viewport.scroll_y;
-        int caret_x = (caret_lc.col - editor->viewport.scroll_x) * editor->viewport.char_width;
+        int caret_display_col = get_caret_display_col(editor);
+        LineCol lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
+        int caret_line = lc.line - editor->viewport.scroll_y;
+        int caret_x = (caret_display_col - editor->viewport.scroll_x) * editor->viewport.char_width;
         int caret_y = tab_height + caret_line * editor->viewport.line_height;
 
         if (caret_line >= 0 && caret_line <= editor->viewport.visible_lines) {

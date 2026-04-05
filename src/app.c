@@ -528,7 +528,7 @@ void app_on_paint(App *app) {
     Tab *tab = tab_manager_get_active(&app->tab_mgr);
     if (tab) {
         // Render editor with tab bar offset handled inside render_paint()
-        render_paint(&tab->editor, hdc, &ps.rcPaint);
+        render_paint(&tab->editor, hdc, &ps.rcPaint, app->tab_mgr.height);
     }
 
     app_update_statusbar(app);
