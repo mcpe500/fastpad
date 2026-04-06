@@ -2,3 +2,4 @@ commit	feature	status	binary_size	description
 538d905	wordwrap	implemented	39.0	Implemented word wrap rendering and caret positioning; verified common controls
 e76a0cd	undogroup	implemented	39.0	Implemented undo grouping for consecutive char insertions and deletions
 af9631d	doublebuffer	implemented	39.0	Implemented double buffering using memory DC to reduce flicker
+497ce03	line_numbers	implemented	40.0	Added line number margin and offset text rendering

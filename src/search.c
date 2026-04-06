@@ -149,6 +149,30 @@ static LRESULT CALLBACK FindSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
                         MessageBoxA(hwnd, MSG_TEXT_NOT_FOUND, DLG_FIND, MB_ICONINFORMATION);
                     }
                 }
+            } else if (id == 104) { // Find Previous button
+                if (!data) break;
+                
+                GetWindowTextA(data->edit_ctrl, data->find_text, sizeof(data->find_text));
+
+                if (data->find_text[0] != '\0' && data->editor) {
+                    TextPos pos = search_find_prev(
+                        &data->editor->buffer,
+                        data->editor->caret,
+                        data->find_text,
+                        data->match_case
+                    );
+
+                    if (pos != -1) {
+                        data->editor->caret = pos;
+                        data->editor->selection.start = pos;
+                        data->editor->selection.end = pos + (int)strlen(data->find_text);
+                        editor_scroll_to_caret(data->editor);
+                        InvalidateRect(data->editor->hwnd, NULL, FALSE);
+                        SetFocus(data->parent);
+                    } else {
+                        MessageBoxA(hwnd, MSG_TEXT_NOT_FOUND, DLG_FIND, MB_ICONINFORMATION);
+                    }
+                }
             } else if (id == 102) { // Close button
                 DestroyWindow(hwnd);
             } else if (id == 103) { // Match case checkbox
@@ -223,7 +247,7 @@ void search_show_dialog(HWND parent_hwnd, Editor *editor) {
         "FastPadFindDialog",
         "Find",
         WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE | DS_MODALFRAME,
-        CW_USEDEFAULT, CW_USEDEFAULT, 350, 90,
+        CW_USEDEFAULT, CW_USEDEFAULT, 420, 90,
         parent_hwnd,
         NULL,
         GetModuleHandle(NULL),
@@ -257,6 +281,12 @@ void search_show_dialog(HWND parent_hwnd, Editor *editor) {
         260, 8, 75, 23,
         g_find_dialog, (HMENU)101, NULL, NULL);
 
+    // Create "Find Previous" button
+    CreateWindowExA(0, "BUTTON", "&Find Prev",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+        340, 8, 75, 23,
+        g_find_dialog, (HMENU)104, NULL, NULL);
+
     // Create "Match case" checkbox
     CreateWindowExA(0, "BUTTON", "&Match case",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP,
@@ -270,7 +300,7 @@ void search_show_dialog(HWND parent_hwnd, Editor *editor) {
     // Create Close button
     CreateWindowExA(0, "BUTTON", "Close",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
-        260, 35, 75, 23,
+        340, 35, 75, 23,
         g_find_dialog, (HMENU)102, NULL, NULL);
 
     // Center dialog on parent
