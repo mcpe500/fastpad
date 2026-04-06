@@ -1,2 +1,3 @@
 commit	feature	status	binary_size	description
 538d905	wordwrap	implemented	39.0	Implemented word wrap rendering and caret positioning; verified common controls
+e76a0cd	undogroup	implemented	39.0	Implemented undo grouping for consecutive char insertions and deletions
