@@ -146,52 +146,20 @@ void buffer_move_gap(GapBuffer *buf, TextPos pos) {
 }
 
 bool buffer_insert(GapBuffer *buf, TextPos pos, const char *text, int length) {
-    if (!buf) {
-        #ifdef DEV_BUILD
-        log_error("BUFFER_INSERT: buf is NULL!");
-        #endif
-        return false;
-    }
-    if (!buf->data) {
-        #ifdef DEV_BUILD
-        log_error("BUFFER_INSERT: buf->data is NULL! Pointer: %p", buf);
-        #endif
-        return false;
-    }
-    if (!text || length <= 0) {
-        return true;
-    }
+    if (!buf || !buf->data) return false;
+    if (!text || length <= 0) return true;
     
-    #ifdef DEV_BUILD
-    log_action("BUFFER_INSERT: pos=%lld, len=%d, data=%p", (long long)pos, length, buf->data);
-    #endif
+    if (pos < 0 || pos > buf->size) return false;
+    if (!buffer_ensure_space(buf, length)) return false;
     
-    if (pos < 0 || pos > buf->size) {
-        #ifdef DEV_BUILD
-        log_error("BUFFER_INSERT: Position %lld out of bounds (size %d)", (long long)pos, buf->size);
-        #endif
-        return false;
-    }
-    
-    if (!buffer_ensure_space(buf, length)) {
-        #ifdef DEV_BUILD
-        log_error("BUFFER_INSERT: Failed to ensure space for %d bytes", length);
-        #endif
-        return false;
-    }
-    
-    // Move gap to insertion position
     buffer_move_gap(buf, pos);
     
-    #ifdef DEV_BUILD
-    log_info("[%s:L%d] about to memcpy into gap at %p", __FUNCTION__, __LINE__, buf->data + buf->gap_start);
-    #endif
-    memcpy(buf->data + buf->gap_start, text, length);
-    #ifdef DEV_BUILD
-    log_info("[%s:L%d] memcpy success", __FUNCTION__, __LINE__);
-    #endif
+    // MANUAL COPY: Avoid memcpy to bypass potential SIMD/Alignment crashes on Windows
+    char *dest = buf->data + buf->gap_start;
+    for (int i = 0; i < length; i++) {
+        dest[i] = text[i];
+    }
     
-    // Update gap
     buf->gap_start += length;
     buf->gap_length -= length;
     buf->size += length;
