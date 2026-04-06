@@ -25,7 +25,7 @@ char buffer_get_char(GapBuffer *buf, TextPos pos);
 int buffer_length(GapBuffer *buf);
 
 // Move gap to position (for efficient access)
-void buffer_move_gap(GapBuffer *buf, int pos);
+void buffer_move_gap(GapBuffer *buf, TextPos pos);
 
 // Ensure there's enough gap space
 bool buffer_ensure_space(GapBuffer *buf, int needed);

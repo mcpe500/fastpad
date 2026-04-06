@@ -104,12 +104,15 @@ bool buffer_ensure_space(GapBuffer *buf, int needed) {
     return true;
 }
 
-void buffer_move_gap(GapBuffer *buf, int pos) {
+void buffer_move_gap(GapBuffer *buf, TextPos pos) {
     #ifdef DEV_BUILD
-    log_info("[%s:L%d] move_gap start, pos: %d, gap_start: %d", __FUNCTION__, __LINE__, pos, buf->gap_start);
+    log_info("[%s:L%d] move_gap start, pos: %lld, gap_start: %lld", __FUNCTION__, __LINE__, (long long)pos, (long long)buf->gap_start);
     #endif
     if (!buf || !buf->data) return;
     if (pos == buf->gap_start) {
+        #ifdef DEV_BUILD
+        log_info("[%s:L%d] no move needed", __FUNCTION__, __LINE__);
+        #endif
         return;
     }
     
@@ -179,8 +182,13 @@ bool buffer_insert(GapBuffer *buf, TextPos pos, const char *text, int length) {
     // Move gap to insertion position
     buffer_move_gap(buf, pos);
     
-    // Copy text into gap
+    #ifdef DEV_BUILD
+    log_info("[%s:L%d] about to memcpy into gap at %p", __FUNCTION__, __LINE__, buf->data + buf->gap_start);
+    #endif
     memcpy(buf->data + buf->gap_start, text, length);
+    #ifdef DEV_BUILD
+    log_info("[%s:L%d] memcpy success", __FUNCTION__, __LINE__);
+    #endif
     
     // Update gap
     buf->gap_start += length;

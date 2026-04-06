@@ -25,7 +25,7 @@ typedef struct {
     char *data;         // buffer data
     int size;           // current text size (excluding gap)
     int capacity;       // total buffer capacity (including gap)
-    int gap_start;      // start of gap (byte offset from data start)
+    TextPos gap_start;      // start of gap (byte offset from data start)
     int gap_length;     // length of gap
 } GapBuffer;
 
