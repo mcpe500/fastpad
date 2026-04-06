@@ -8,14 +8,22 @@
 static FILE *log_file = NULL;
 
 void init_logging() {
-    char temp_path[MAX_PATH];
-    GetTempPathA(MAX_PATH, temp_path);
+    char exe_path[MAX_PATH];
+    GetModuleFileNameA(NULL, exe_path, MAX_PATH);
+    
+    // Remove filename to get the directory
+    char *last_slash = strrchr(exe_path, '\\');
+    if (last_slash) {
+        *last_slash = '\0';
+    }
+    
     char log_path[MAX_PATH];
-    snprintf(log_path, sizeof(log_path), "%sfastpad_dev.log", temp_path);
+    snprintf(log_path, sizeof(log_path), "%s\\fastpad_dev.log", exe_path);
     
     log_file = fopen(log_path, "w");
     if (log_file) {
         fprintf(log_file, "--- FastPad Dev Log Started ---\\n");
+        fprintf(log_file, "Executable path: %s\\n", exe_path);
         fprintf(log_file, "Log file location: %s\\n", log_path);
     }
 }
