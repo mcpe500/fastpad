@@ -8,11 +8,17 @@
 #define MAX_BUFFER_SIZE (100 * 1024 * 1024) /* 100 MB limit for v1 */
 
 bool buffer_init(GapBuffer *buf, int initial_capacity) {
+    #ifdef DEV_BUILD
+    log_info("[%s:L%d] buffer_init start", __FUNCTION__, __LINE__);
+    #endif
     if (initial_capacity <= 0) {
         initial_capacity = INITIAL_CAPACITY;
     }
     
     buf->data = (char *)malloc(initial_capacity);
+    #ifdef DEV_BUILD
+    log_info("[%s:L%d] malloc called, result: %p", __FUNCTION__, __LINE__, buf->data);
+    #endif
     if (!buf->data) {
         return false;
     }
@@ -22,6 +28,9 @@ bool buffer_init(GapBuffer *buf, int initial_capacity) {
     buf->gap_start = 0;
     buf->gap_length = initial_capacity;
     
+    #ifdef DEV_BUILD
+    log_info("[%s:L%d] buffer_init success", __FUNCTION__, __LINE__);
+    #endif
     return true;
 }
 
@@ -37,22 +46,23 @@ void buffer_free(GapBuffer *buf) {
 }
 
 bool buffer_ensure_space(GapBuffer *buf, int needed) {
+    #ifdef DEV_BUILD
+    log_info("[%s:L%d] ensure_space start, needed: %d, gap: %d", __FUNCTION__, __LINE__, needed, buf->gap_length);
+    #endif
     if (buf->gap_length >= needed) {
+        #ifdef DEV_BUILD
+        log_info("[%s:L%d] space already enough", __FUNCTION__, __LINE__);
+        #endif
         return true;
     }
 
-    // Need to grow buffer
-    // Check for integer overflow before multiplying
     if (buf->capacity > MAX_BUFFER_SIZE / GROWTH_FACTOR) {
-        // Would overflow or exceed limit
         return false;
     }
 
     int new_capacity = buf->capacity * GROWTH_FACTOR;
     while (new_capacity - buf->size < needed) {
-        // Check for overflow before next multiply
         if (new_capacity > MAX_BUFFER_SIZE / GROWTH_FACTOR) {
-            /* One final step to reach needed */
             int final_capacity = buf->size + needed + 1024;
             if (final_capacity > MAX_BUFFER_SIZE) return false;
             new_capacity = final_capacity;
@@ -61,16 +71,24 @@ bool buffer_ensure_space(GapBuffer *buf, int needed) {
         new_capacity *= GROWTH_FACTOR;
     }
     
+    #ifdef DEV_BUILD
+    log_info("[%s:L%d] reallocating to %d bytes", __FUNCTION__, __LINE__, new_capacity);
+    #endif
     char *new_data = (char *)realloc(buf->data, new_capacity);
+    #ifdef DEV_BUILD
+    log_info("[%s:L%d] realloc result: %p", __FUNCTION__, __LINE__, new_data);
+    #endif
     if (!new_data) {
         return false;
     }
     
-    // Move data after gap to new position
     int after_gap_start = buf->gap_start + buf->gap_length;
     int after_gap_size = buf->capacity - after_gap_start;
     
     if (after_gap_size > 0) {
+        #ifdef DEV_BUILD
+        log_info("[%s:L%d] memmove after_gap size: %d", __FUNCTION__, __LINE__, after_gap_size);
+        #endif
         memmove(new_data + new_capacity - after_gap_size, 
                 new_data + after_gap_start, 
                 after_gap_size);
@@ -80,10 +98,16 @@ bool buffer_ensure_space(GapBuffer *buf, int needed) {
     buf->gap_length = new_capacity - buf->size;
     buf->capacity = new_capacity;
     
+    #ifdef DEV_BUILD
+    log_info("[%s:L%d] ensure_space success", __FUNCTION__, __LINE__);
+    #endif
     return true;
 }
 
 void buffer_move_gap(GapBuffer *buf, int pos) {
+    #ifdef DEV_BUILD
+    log_info("[%s:L%d] move_gap start, pos: %d, gap_start: %d", __FUNCTION__, __LINE__, pos, buf->gap_start);
+    #endif
     if (!buf || !buf->data) return;
     if (pos == buf->gap_start) {
         return;
@@ -94,18 +118,27 @@ void buffer_move_gap(GapBuffer *buf, int pos) {
     if (pos < buf->gap_start) {
         // Moving gap left: shift data right
         int move_size = buf->gap_start - pos;
+        #ifdef DEV_BUILD
+        log_info("[%s:L%d] shifting right, size: %d", __FUNCTION__, __LINE__, move_size);
+        #endif
         memmove(buf->data + pos + buf->gap_length, 
                 buf->data + pos, 
                 move_size);
     } else {
         // Moving gap right: shift data left
         int move_size = pos - buf->gap_start;
+        #ifdef DEV_BUILD
+        log_info("[%s:L%d] shifting left, size: %d", __FUNCTION__, __LINE__, move_size);
+        #endif
         memmove(buf->data + buf->gap_start, 
                 buf->data + current_gap_end, 
                 move_size);
     }
     
     buf->gap_start = pos;
+    #ifdef DEV_BUILD
+    log_info("[%s:L%d] move_gap success", __FUNCTION__, __LINE__);
+    #endif
 }
 
 bool buffer_insert(GapBuffer *buf, TextPos pos, const char *text, int length) {
@@ -163,10 +196,13 @@ bool buffer_delete(GapBuffer *buf, TextPos pos, int length) {
     }
     
     #ifdef DEV_BUILD
-    log_action("BUFFER_DELETE", "pos: %lld, len: %d", pos, length);
+    log_info("[%s:L%d] delete start, pos: %lld, len: %d", __FUNCTION__, __LINE__, (long long)pos, length);
     #endif
     
     if (pos < 0 || pos + length > buf->size) {
+        #ifdef DEV_BUILD
+        log_error("BUFFER_DELETE: Position %lld out of bounds", (long long)pos);
+        #endif
         return false;
     }
     
@@ -177,6 +213,9 @@ bool buffer_delete(GapBuffer *buf, TextPos pos, int length) {
     buf->gap_length += length;
     buf->size -= length;
     
+    #ifdef DEV_BUILD
+    log_info("[%s:L%d] delete success", __FUNCTION__, __LINE__);
+    #endif
     return true;
 }
 
