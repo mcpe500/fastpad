@@ -1,6 +1,7 @@
 #include "editor.h"
 #include "buffer.h"
 #include "render.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -608,8 +609,10 @@ void editor_key_down(Editor *editor, int key) {
 }
 
 void editor_mouse_click(Editor *editor, int x, int y, bool shift) {
+    if (x < RENDER_MARGIN_WIDTH) return; // Ignore clicks in margin
+    int adj_x = x - RENDER_MARGIN_WIDTH;
     int line = render_y_to_line(editor, y);
-    int col = x / editor->viewport.char_width + editor->viewport.scroll_x;
+    int col = adj_x / editor->viewport.char_width + editor->viewport.scroll_x;
     
     TextPos pos = buffer_linecol_to_pos(&editor->buffer, (LineCol){line, col});
     
@@ -631,8 +634,10 @@ void editor_mouse_click(Editor *editor, int x, int y, bool shift) {
 }
 
 void editor_mouse_drag(Editor *editor, int x, int y) {
+    if (x < RENDER_MARGIN_WIDTH) return; // Ignore drags in margin
+    int adj_x = x - RENDER_MARGIN_WIDTH;
     int line = render_y_to_line(editor, y);
-    int col = x / editor->viewport.char_width + editor->viewport.scroll_x;
+    int col = adj_x / editor->viewport.char_width + editor->viewport.scroll_x;
     
     TextPos pos = buffer_linecol_to_pos(&editor->buffer, (LineCol){line, col});
     

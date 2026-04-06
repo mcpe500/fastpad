@@ -3,6 +3,8 @@
 
 #include "types.h"
 
+#define RENDER_MARGIN_WIDTH 50
+
 // Initialize rendering resources
 bool render_init(Editor *editor);
 
