@@ -30,10 +30,9 @@ $(TARGET): $(SRCS) | $(BUILDDIR)
 dev: $(SRCS) | $(BUILDDIR)
 	$(CC) $(CFLAGS) -DDEV_BUILD $(LDFLAGS) $^ -o $(BUILDDIR)/FastPad_dev.exe $(LIBS)
 
-test: $(TEST_SRCS) | $(BUILDDIR)
-	$(CC) -Os -Wall -Wextra -g \
-		$(TEST_SRCS) -o $(BUILDDIR)/test_runner
-	$(BUILDDIR)/test_runner
+test_linux: | $(BUILDDIR)
+	gcc -DDEV_BUILD -I./src tests/buffer_test.c src/buffer.c src/log_mock.c -o $(BUILDDIR)/buffer_tester
+	$(BUILDDIR)/buffer_tester
 
 $(BUILDDIR):
 	mkdir -p $(BUILDDIR)

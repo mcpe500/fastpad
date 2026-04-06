@@ -1,4 +1,5 @@
 #include "buffer.h"
+#include "core_types.h"
 #include "log.h"
 #include <stdlib.h>
 #include <string.h>

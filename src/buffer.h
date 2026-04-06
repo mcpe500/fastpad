@@ -1,7 +1,7 @@
 #ifndef BUFFER_H
 #define BUFFER_H
 
-#include "types.h"
+#include "core_types.h"
 
 // Initialize gap buffer with initial capacity
 bool buffer_init(GapBuffer *buf, int initial_capacity);
