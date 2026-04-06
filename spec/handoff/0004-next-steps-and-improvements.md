@@ -115,7 +115,7 @@ Also add `comctl32` to LIBS in Makefile.
 
 ## P1: Important Improvements (Should Do)
 
-### 4. Implement Undo Grouping
+### 4. Implement Undo Grouping (Done)
 
 **What**: Group consecutive character insertions into single undo operation
 
@@ -126,122 +126,49 @@ Also add `comctl32` to LIBS in Makefile.
 2. If current operation is same type and adjacent position, extend previous operation
 3. Otherwise, create new operation
 
-```c
-// In editor_char_input()
-if (undo.count > 0) {
-    UndoOp *last = &undo.ops[undo.count - 1];
-    if (last->type == OP_INSERT && 
-        last->pos + last->length == caret &&
-        same_typing_session()) {
-        // Extend previous operation
-        last->text = realloc(last->text, last->length + 1);
-        last->text[last->length] = ch;
-        last->length++;
-        return;
-    }
-}
-// Otherwise create new operation
-editor_add_undo_op(...);
-```
-
-**Session detection**: Use timestamp (e.g., 2 seconds between keystrokes = new session)
-
-**Pitfalls**:
-- Need to handle selection deletion correctly
-- Must reset grouping on navigation
-- Memory management for extended text
-
-**Estimated effort**: Medium (50-100 lines)
+**Status**: Implemented
 
 ---
 
-### 5. Double Buffering to Reduce Flicker
+### 5. Double Buffering to Reduce Flicker (Done)
 
 **What**: Render to memory DC first, then copy to screen
 
 **Why**: Current implementation might flicker on resize or rapid typing
 
-**How**:
-```c
-void render_paint(Editor *editor, HDC hdc, const RECT *update_rect) {
-    RECT client_rect;
-    GetClientRect(editor->hwnd, &client_rect);
-    
-    // Create memory DC
-    HDC mem_dc = CreateCompatibleDC(hdc);
-    HBITMAP bitmap = CreateCompatibleBitmap(hdc, 
-                                            client_rect.right, 
-                                            client_rect.bottom);
-    HBITMAP old_bitmap = SelectObject(mem_dc, bitmap);
-    
-    // Render to memory DC
-    render_to_dc(editor, mem_dc, &client_rect);
-    
-    // Copy to screen
-    BitBlt(hdc, 0, 0, client_rect.right, client_rect.bottom,
-           mem_dc, 0, 0, SRCCOPY);
-    
-    // Cleanup
-    SelectObject(mem_dc, old_bitmap);
-    DeleteObject(bitmap);
-    DeleteDC(mem_dc);
-}
-```
-
-**Pitfalls**:
-- Slightly more memory usage
-- Must keep in sync with screen updates
-
-**Estimated effort**: Small (30-50 lines)
+**Status**: Implemented
 
 ---
 
-### 6. Add Line Number Margin (Optional)
+### 6. Add Line Number Margin (Done)
 
 **What**: Show line numbers in left margin
 
 **Why**: Common editor feature, helps navigation
 
-**How**:
-1. Reserve left margin (e.g., 50 pixels)
-2. In render_paint(), draw line numbers before text
-3. Adjust viewport scroll calculations
-4. Handle resizing
-
-**Pitfalls**:
-- Takes screen space
-- Must update on line insert/delete
-- Right-align numbers for alignment
-
-**Estimated effort**: Medium (80-120 lines)
+**Status**: Implemented
 
 ---
 
-### 7. Improve Find Dialog
+### 7. Improve Find Dialog (Done)
 
 **What**: Create proper modal dialog with better UX
 
 **Why**: Current implementation is simple modeless dialog
 
-**How**:
-1. Create dialog template in memory (DLGTEMPLATE)
-2. Use DialogBoxIndirect() for modal dialog
-3. Add "Find Previous" button
-4. Add search direction (up/down)
-5. Highlight all matches option
-6. Remember last search text
+**Status**: Implemented (Added Find Previous)
 
-**Alternative**: Keep modeless but add:
-- "Find Previous" button
-- "Highlight All" checkbox
-- Search progress for large files
-- Replace functionality
+---
 
-**Pitfalls**:
-- Dialog templates in memory are complex
-- Must handle parent window disable/enable
+### 8. Persistent Undo History (Done)
 
-**Estimated effort**: Medium-High (150-300 lines)
+**What**: Save undo/redo stacks to temporary files so history is preserved across sessions.
+
+**Why**: Users expect to be able to undo changes even after restarting the app.
+
+**How**: Binary serialization of `UndoOp` array to `%TEMP%\fastpad_undo_<hash>.bin`.
+
+**Status**: Implemented
 
 ---
 

@@ -58,4 +58,8 @@ void editor_resize(Editor *editor);
 bool editor_undo(Editor *editor);
 bool editor_redo(Editor *editor);
 
+// History persistence
+bool editor_save_history(Editor *editor, const char *filename);
+bool editor_load_history(Editor *editor, const char *filename);
+
 #endif // EDITOR_H

@@ -4,9 +4,95 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+#include <shlwapi.h>
+
+#pragma comment(lib, "shlwapi.lib")
 
 #define UNDO_MAX_OPS 1000
 #define UNDO_MAX_TEXT 10000
+
+// Helper: generate a simple hash for a filename to create a unique history file
+static void get_history_filename(const char *filename, char *out_path) {
+    char temp_path[MAX_PATH];
+    GetTempPathA(MAX_PATH, temp_path);
+    
+    unsigned long hash = 5381;
+    int c;
+    const char *str = filename;
+    while ((c = *str++))
+        hash = ((hash << 5) + hash) + c;
+    
+    sprintf(out_path, "%sfastpad_undo_%lx.bin", temp_path, hash);
+}
+
+bool editor_save_history(Editor *editor, const char *filename) {
+    if (!filename || editor->undo.count == 0) return false;
+    
+    char path[MAX_PATH];
+    get_history_filename(filename, path);
+    
+    FILE *f = fopen(path, "wb");
+    if (!f) return false;
+    
+    fwrite(&editor->undo.count, sizeof(int), 1, f);
+    fwrite(&editor->undo.current, sizeof(int), 1, f);
+    
+    for (int i = 0; i < editor->undo.count; i++) {
+        UndoOp *op = &editor->undo.ops[i];
+        fwrite(&op->type, sizeof(UndoOpType), 1, f);
+        fwrite(&op->pos, sizeof(TextPos), 1, f);
+        fwrite(&op->length, sizeof(int), 1, f);
+        fwrite(&op->replace_len, sizeof(int), 1, f);
+        fwrite(op->text, 1, op->length, f);
+    }
+    
+    fclose(f);
+    return true;
+}
+
+bool editor_load_history(Editor *editor, const char *filename) {
+    if (!filename) return false;
+    
+    char path[MAX_PATH];
+    get_history_filename(filename, path);
+    
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    
+    int count, current;
+    if (fread(&count, sizeof(int), 1, f) != 1) { fclose(f); return false; }
+    if (fread(&current, sizeof(int), 1, f) != 1) { fclose(f); return false; }
+    
+    if (count > UNDO_MAX_OPS) count = UNDO_MAX_OPS;
+    
+    // Free existing history if any
+    for (int i = 0; i < editor->undo.count; i++) {
+        if (editor->undo.ops[i].text) free(editor->undo.ops[i].text);
+    }
+    
+    editor->undo.count = 0;
+    editor->undo.current = current;
+    
+    for (int i = 0; i < count; i++) {
+        UndoOp op;
+        if (fread(&op.type, sizeof(UndoOpType), 1, f) != 1) break;
+        if (fread(&op.pos, sizeof(TextPos), 1, f) != 1) break;
+        if (fread(&op.length, sizeof(int), 1, f) != 1) break;
+        if (fread(&op.replace_len, sizeof(int), 1, f) != 1) break;
+        
+        op.text = (char *)malloc(op.length + 1);
+        if (op.text) {
+            fread(op.text, 1, op.length, f);
+            op.text[op.length] = '\0';
+            
+            editor->undo.ops[editor->undo.count++] = op;
+        }
+    }
+    
+    fclose(f);
+    return true;
+}
 
 bool editor_init(Editor *editor, HWND hwnd) {
     memset(editor, 0, sizeof(Editor));

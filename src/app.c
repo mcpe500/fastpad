@@ -163,6 +163,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
 
         case WM_DESTROY: {
+            // Save history for all active tabs before closing
+            for (int i = 0; i < app->tab_mgr.count; i++) {
+                Tab *tab = &app->tab_mgr.tabs[i];
+                if (tab->active) {
+                    editor_save_history(&tab->editor, tab->filename);
+                }
+            }
+            
             // Don't close tabs one-by-one, just free resources directly
             tab_manager_free(&app->tab_mgr);
             PostQuitMessage(0);
@@ -333,6 +341,9 @@ void app_file_open(App *app) {
         tab->editor.selection.start = 0;
         tab->editor.selection.end = 0;
         tab->editor.modified = false;
+        
+        // Load persistent history for this file
+        editor_load_history(&tab->editor, filename);
         
         InvalidateRect(tab->hwnd, NULL, TRUE);
     }

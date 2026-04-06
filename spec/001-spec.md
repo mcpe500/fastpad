@@ -96,7 +96,12 @@ FastPad v1 must support:
 8. **Mouse caret placement**
 9. **Text selection**
 10. **Copy/Cut/Paste**
-11. **Undo/Redo** (single-stack or simple bounded history is acceptable)
+# Core Features for v1
+
+FastPad v1 must support:
+...
+11. **Undo/Redo** (bounded history with persistence to temp files)
+...
 12. **Vertical scrolling**
 13. **Find dialog**
 14. **Status bar**
