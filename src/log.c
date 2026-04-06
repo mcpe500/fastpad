@@ -36,6 +36,38 @@ void close_logging() {
     }
 }
 
+char *log_get_full_text() {
+    char temp_path[MAX_PATH];
+    GetTempPathA(MAX_PATH, temp_path);
+    char log_path[MAX_PATH];
+    snprintf(log_path, sizeof(log_path), "%sfastpad_dev.log", temp_path);
+    
+    // Note: In the new version we save next to EXE, 
+    // but for compatibility let's check both or use the local path
+    char exe_path[MAX_PATH];
+    GetModuleFileNameA(NULL, exe_path, MAX_PATH);
+    char *last_slash = strrchr(exe_path, '\\');
+    if (last_slash) *last_slash = '\\0';
+    char local_log[MAX_PATH];
+    snprintf(local_log, sizeof(local_log), "%s\\fastpad_dev.log", exe_path);
+
+    FILE *f = fopen(local_log, "r");
+    if (!f) f = fopen(log_path, "r"); // fallback to temp
+    if (!f) return NULL;
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    rewind(f);
+
+    char *buffer = (char *)malloc(size + 1);
+    if (buffer) {
+        fread(buffer, 1, size, f);
+        buffer[size] = '\\0';
+    }
+    fclose(f);
+    return buffer;
+}
+
 static void write_log(const char *level, const char *fmt, va_list args) {
     if (!log_file) return;
     
