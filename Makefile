@@ -31,7 +31,7 @@ dev: $(SRCS) | $(BUILDDIR)
 	$(CC) $(CFLAGS) -DDEV_BUILD $(LDFLAGS) $^ -o $(BUILDDIR)/FastPad_dev.exe $(LIBS)
 
 test_linux: | $(BUILDDIR)
-	gcc -DDEV_BUILD -I./src tests/buffer_test.c src/buffer.c src/log_mock.c -o $(BUILDDIR)/buffer_tester
+	gcc -DDEV_BUILD -fsanitize=address -g -I./src tests/buffer_test.c src/buffer.c src/log_mock.c -o $(BUILDDIR)/buffer_tester
 	$(BUILDDIR)/buffer_tester
 
 $(BUILDDIR):
