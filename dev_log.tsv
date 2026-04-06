@@ -1,1 +1,2 @@
 commit	feature	status	binary_size	description
+538d905	wordwrap	implemented	39.0	Implemented word wrap rendering and caret positioning; verified common controls

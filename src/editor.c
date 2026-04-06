@@ -63,7 +63,48 @@ void editor_free(Editor *editor) {
 }
 
 static void editor_add_undo_op(Editor *editor, UndoOpType type, TextPos pos, const char *text, int length) {
-    // Clear redo history when new operation is added
+    // Check if we can group this operation with the previous one
+    if (editor->undo.count > 0) {
+        UndoOp *last = &editor->undo.ops[editor->undo.count - 1];
+        
+        if (type == OP_INSERT && last->type == OP_INSERT && last->pos + last->length == pos) {
+            // Group consecutive insertions
+            char *new_text = (char *)realloc(last->text, last->length + length + 1);
+            if (new_text) {
+                last->text = new_text;
+                memcpy(last->text + last->length, text, length);
+                last->text[last->length + length] = '\0';
+                last->length += length;
+                // Redo is already cleared by the first insertion
+                return;
+            }
+        } else if (type == OP_DELETE && last->type == OP_DELETE && last->pos == pos + length) {
+            // Group consecutive deletions (backspacing)
+            char *new_text = (char *)realloc(last->text, last->length + length + 1);
+            if (new_text) {
+                last->text = new_text;
+                // Shift existing text right, insert new text at the beginning
+                memmove(last->text + length, last->text, last->length);
+                memcpy(last->text, text, length);
+                last->text[last->length + length] = '\0';
+                last->pos = pos;
+                last->length += length;
+                return;
+            }
+        } else if (type == OP_DELETE && last->type == OP_DELETE && last->pos + last->length == pos) {
+            // Group consecutive deletions (Delete key)
+            char *new_text = (char *)realloc(last->text, last->length + length + 1);
+            if (new_text) {
+                last->text = new_text;
+                memcpy(last->text + last->length, text, length);
+                last->text[last->length + length] = '\0';
+                last->length += length;
+                return;
+            }
+        }
+    }
+
+    // Clear redo history when new (ungrouped) operation is added
     for (int i = 0; i < editor->redo.count; i++) {
         if (editor->redo.ops[i].text) {
             free(editor->redo.ops[i].text);
