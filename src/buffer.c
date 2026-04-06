@@ -84,6 +84,7 @@ bool buffer_ensure_space(GapBuffer *buf, int needed) {
 }
 
 void buffer_move_gap(GapBuffer *buf, int pos) {
+    if (!buf || !buf->data) return;
     if (pos == buf->gap_start) {
         return;
     }
@@ -108,6 +109,12 @@ void buffer_move_gap(GapBuffer *buf, int pos) {
 }
 
 bool buffer_insert(GapBuffer *buf, TextPos pos, const char *text, int length) {
+    if (!buf || !buf->data) {
+        #ifdef DEV_BUILD
+        log_error("BUFFER_INSERT: Buffer not initialized!");
+        #endif
+        return false;
+    }
     if (!text || length <= 0) {
         return true;
     }
@@ -117,6 +124,9 @@ bool buffer_insert(GapBuffer *buf, TextPos pos, const char *text, int length) {
     #endif
     
     if (pos < 0 || pos > buf->size) {
+        #ifdef DEV_BUILD
+        log_error("BUFFER_INSERT: Position %lld out of bounds (size %d)", pos, buf->size);
+        #endif
         return false;
     }
     
