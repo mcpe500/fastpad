@@ -1,4 +1,5 @@
 #include "buffer.h"
+#include "log.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -111,6 +112,10 @@ bool buffer_insert(GapBuffer *buf, TextPos pos, const char *text, int length) {
         return true;
     }
     
+    #ifdef DEV_BUILD
+    log_action("BUFFER_INSERT", "pos: %lld, len: %d", pos, length);
+    #endif
+    
     if (pos < 0 || pos > buf->size) {
         return false;
     }
@@ -137,6 +142,10 @@ bool buffer_delete(GapBuffer *buf, TextPos pos, int length) {
     if (length <= 0) {
         return true;
     }
+    
+    #ifdef DEV_BUILD
+    log_action("BUFFER_DELETE", "pos: %lld, len: %d", pos, length);
+    #endif
     
     if (pos < 0 || pos + length > buf->size) {
         return false;

@@ -1,6 +1,7 @@
 #include "editor.h"
 #include "buffer.h"
 #include "render.h"
+#include "log.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -336,6 +337,9 @@ void editor_select_all(Editor *editor) {
 }
 
 void editor_char_input(Editor *editor, char ch) {
+    #ifdef DEV_BUILD
+    log_action("EDITOR_INPUT", "char: %c", ch);
+    #endif
     // BUG #014 Fix: When typing with a selection, use OP_REPLACE instead of
     // separate DELETE + INSERT ops. This allows single undo to restore original text.
     if (editor_has_selection(editor)) {

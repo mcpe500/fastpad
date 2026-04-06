@@ -17,7 +17,8 @@ SRCS = $(SRCDIR)/main.c \
        $(SRCDIR)/fileio.c \
        $(SRCDIR)/render.c \
        $(SRCDIR)/search.c \
-       $(SRCDIR)/tab_manager.c
+       $(SRCDIR)/tab_manager.c \
+       $(SRCDIR)/log.c
 
 TEST_SRCS = tests/unit_tests.c
 
@@ -25,6 +26,9 @@ all: $(TARGET)
 
 $(TARGET): $(SRCS) | $(BUILDDIR)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@ $(LIBS)
+
+dev: $(SRCS) | $(BUILDDIR)
+	$(CC) $(CFLAGS) -DDEV_BUILD $(LDFLAGS) $^ -o $(BUILDDIR)/FastPad_dev.exe $(LIBS)
 
 test: $(TEST_SRCS) | $(BUILDDIR)
 	$(CC) -Os -Wall -Wextra -g \

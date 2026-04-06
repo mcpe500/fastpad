@@ -6,6 +6,7 @@
 #include "search.h"
 #include "tab_manager.h"
 #include "errors.h"
+#include "log.h"
 #include <commctrl.h>
 #include <stdio.h>
 #include <string.h>
@@ -40,6 +41,14 @@ App g_app;
 // Window procedure
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     App *app = (App *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+    
+    #ifdef DEV_BUILD
+    // Log every message for debugging crashes
+    // We only log important ones to avoid huge files
+    if (msg == WM_CREATE || msg == WM_DESTROY || msg == WM_CLOSE || msg == WM_COMMAND) {
+        log_info("WndProc: msg=0x%X, wParam=0x%X", msg, wParam);
+    }
+    #endif
     
     switch (msg) {
         case WM_CREATE: {
