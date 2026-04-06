@@ -486,19 +486,20 @@ void app_on_command(App *app, WPARAM wParam) {
             break;
         }
             
-        case ID_VIEW_WORDWRAP:
+        case ID_VIEW_WORDWRAP: {
             app->word_wrap = !app->word_wrap;
             CheckMenuItem(app->menu, ID_VIEW_WORDWRAP,
                          app->word_wrap ? MF_CHECKED : MF_UNCHECKED);
-            // BUG #007 Fix: Inform user word wrap is not yet implemented
-            MessageBoxA(app->hwnd,
-                       MSG_WORD_WRAP_NOT_IMPLEMENTED,
-                       DLG_FASTPAD,
-                       MB_ICONINFORMATION);
-            // Reset checkbox since feature is not implemented
-            app->word_wrap = false;
-            CheckMenuItem(app->menu, ID_VIEW_WORDWRAP, MF_UNCHECKED);
+            
+            RECT rc;
+            GetClientRect(app->hwnd, &rc);
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) {
+                render_resize(&tab->editor, rc.right, rc.bottom);
+            }
+            InvalidateRect(app->hwnd, NULL, TRUE);
             break;
+        }
             
         case ID_VIEW_STATUSBAR:
             app->show_statusbar = !app->show_statusbar;
