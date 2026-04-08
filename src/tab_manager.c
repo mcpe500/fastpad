@@ -209,6 +209,10 @@ bool tab_manager_switch_tab(TabManager *mgr, int index) {
     // Hide caret during switch to prevent stale positioning
     HideCaret(mgr->parent_hwnd);
 
+    // Pastikan editor baru benar-benar aktif
+    Tab *active = tab_manager_get_active(mgr);
+    if (active) InvalidateRect(active->hwnd, NULL, TRUE);
+
     // Update window title
     tab_manager_update_window_title(mgr, mgr->parent_hwnd);
 

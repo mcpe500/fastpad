@@ -231,7 +231,7 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
                     sel_end_disp = byte_col_to_display_col(&editor->buffer, l_start, s_end_in_line);
                 }
 
-                if (sel_start_disp != -1) {
+                if (has_selection && sel_start_disp != -1) {
                     int intersect_start = (seg_start_col > sel_start_disp) ? seg_start_col : sel_start_disp;
                     int intersect_end = (seg_end_col < sel_end_disp) ? seg_end_col : sel_end_disp;
                     if (intersect_end > intersect_start) {
