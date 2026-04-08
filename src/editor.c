@@ -8,8 +8,6 @@
 #include <stdio.h>
 #include <shlwapi.h>
 
-#pragma comment(lib, "shlwapi.lib")
-
 #define UNDO_MAX_OPS 1000
 #define UNDO_MAX_TEXT 10000
 

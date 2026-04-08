@@ -1,7 +1,9 @@
 #include "render.h"
 #include "buffer.h"
+#include "types.h"          /* for extern App g_app */
 #include <stdlib.h>
 #include <stdio.h>
+#include <windows.h>        /* for SIZE struct + GDI functions */
 
 #define FONT_HEIGHT 16
 #define FONT_WIDTH 8
@@ -10,7 +12,7 @@
 // Helper: find the best wrap point in a string
 static int find_wrap_point(const char *text, int max_cols) {
     if (max_cols <= 0) return 0;
-    if (strlen(text) <= max_cols) return (int)strlen(text);
+    if ((int)strlen(text) <= max_cols) return (int)strlen(text);
 
     // Look for the last space before the limit
     for (int i = max_cols - 1; i >= 0; i--) {
@@ -199,12 +201,17 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
 
                 // 2. Draw Line Number
                 char line_num_str[32];
-                snprintf(line_num_str, sizeof(line_num_str), "%d", logical_line + 1);
-                SetTextColor(mem_dc, RGB(150, 150, 150));
+                snprintf(line_num_str, sizeof(line_num_str), "%d", logical_line + 1);   // 1-based
+
+                /* FIXED: GetTextExtentPoint32A was called with NULL → undefined behavior / crash */
+                SIZE text_size = {0};
+                GetTextExtentPoint32A(mem_dc, line_num_str, (int)strlen(line_num_str), &text_size);
+
+                SetTextColor(mem_dc, RGB(128, 128, 128));   /* slightly darker for better visibility */
                 SetBkMode(mem_dc, TRANSPARENT);
                 
-                // Right-align line number in margin
-                int num_width = GetTextExtentPoint32A(mem_dc, line_num_str, (int)strlen(line_num_str), NULL);
+                int num_width = text_size.cx;
+                
                 TextOutA(mem_dc, RENDER_MARGIN_WIDTH - num_width - 5, visual_line_y, line_num_str, (int)strlen(line_num_str));
 
                 // 3. Draw Text

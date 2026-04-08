@@ -12,6 +12,7 @@ LRESULT CALLBACK CrashDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     switch (msg) {
         case WM_COMMAND: {
             if (LOWORD(wParam) == IDC_COPY_LOG) {
+                #ifdef DEV_BUILD
                 char *log_text = log_get_full_text();
                 if (log_text) {
                     if (OpenClipboard(hwnd)) {
@@ -29,6 +30,9 @@ LRESULT CALLBACK CrashDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 } else {
                     MessageBoxA(hwnd, "Could not read log file.", "Error", MB_OK | MB_ICONERROR);
                 }
+                #else
+                MessageBoxA(hwnd, "Logging not available in release build.", "Info", MB_OK | MB_ICONINFORMATION);
+                #endif
             } else if (LOWORD(wParam) == IDC_CLOSE_CRASH) {
                 DestroyWindow(hwnd);
             }
@@ -91,10 +95,12 @@ LONG WINAPI crash_handler(EXCEPTION_POINTERS *ExceptionInfo) {
     #ifdef DEV_BUILD
     DWORD code = ExceptionInfo->ExceptionRecord->ExceptionCode;
     void* addr = ExceptionInfo->ExceptionRecord->ExceptionAddress;
-    
+
     log_error("!!! CRASH DETECTED !!! Code: 0x%08lX at 0x%p", code, addr);
-    
+
     show_crash_dialog(code, addr);
+    #else
+    (void)ExceptionInfo;
     #endif
     return EXCEPTION_EXECUTE_HANDLER;
 }
