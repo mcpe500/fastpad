@@ -571,6 +571,12 @@ void app_on_char(App *app, WPARAM wParam) {
     
     char ch = (char)wParam;
     
+    // FIX: Ignore control characters (Ctrl+A, Ctrl+B, etc. are handled in WM_KEYDOWN)
+    // WM_CHAR with control characters would insert garbage like SOH (0x01), STX (0x03)
+    if ((unsigned char)ch < 32) {
+        return;
+    }
+    
     // Handle control characters
     if (ch == '\r') {
         return; // Handled by VK_RETURN
