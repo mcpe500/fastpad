@@ -19,6 +19,7 @@
 // Forward declarations
 static void app_update_recent_menu(App *app);
 static void recent_files_save(App *app);
+void app_apply_theme(const Theme *theme);
 
 #define IDC_EDIT 1001
 #define IDC_BUTTON_FIND 1002
@@ -66,6 +67,13 @@ static void recent_files_save(App *app);
 #define ID_TOOLS_PLUGINS 4073
 #define ID_SETTINGS_EXPORT 4074
 #define ID_SETTINGS_IMPORT 4075
+#define ID_SETTINGS_THEME 4080  // Base ID for theme submenu items
+#define ID_THEME_CLASSIC_LIGHT  4081
+#define ID_THEME_CLASSIC_DARK   4082
+#define ID_THEME_MONOKAI        4083
+#define ID_THEME_SOLARIZED_LIGHT 4084
+#define ID_THEME_SOLARIZED_DARK  4085
+#define ID_THEME_DRACULA        4086
 
 App g_app;
 
@@ -407,6 +415,16 @@ HWND app_create_window(App *app, HINSTANCE hInstance) {
     // Settings menu
     HMENU settings_menu = CreatePopupMenu();
     AppendMenuA(settings_menu, MF_STRING, ID_SETTINGS_SHORTCUTS, "&Keyboard Shortcuts...");
+    // Theme submenu
+    HMENU theme_menu = CreatePopupMenu();
+    const Theme *current_theme = app->current_theme;
+    AppendMenuA(theme_menu, MF_STRING | (strcmp(current_theme->id, THEME_CLASSIC_LIGHT) == 0 ? MF_CHECKED : 0), ID_THEME_CLASSIC_LIGHT, "Classic Light");
+    AppendMenuA(theme_menu, MF_STRING | (strcmp(current_theme->id, THEME_CLASSIC_DARK) == 0 ? MF_CHECKED : 0), ID_THEME_CLASSIC_DARK, "Classic Dark");
+    AppendMenuA(theme_menu, MF_STRING | (strcmp(current_theme->id, THEME_MONOKAI) == 0 ? MF_CHECKED : 0), ID_THEME_MONOKAI, "Monokai");
+    AppendMenuA(theme_menu, MF_STRING | (strcmp(current_theme->id, THEME_SOLARIZED_LIGHT) == 0 ? MF_CHECKED : 0), ID_THEME_SOLARIZED_LIGHT, "Solarized Light");
+    AppendMenuA(theme_menu, MF_STRING | (strcmp(current_theme->id, THEME_SOLARIZED_DARK) == 0 ? MF_CHECKED : 0), ID_THEME_SOLARIZED_DARK, "Solarized Dark");
+    AppendMenuA(theme_menu, MF_STRING | (strcmp(current_theme->id, THEME_DRACULA) == 0 ? MF_CHECKED : 0), ID_THEME_DRACULA, "Dracula");
+    AppendMenuA(settings_menu, MF_POPUP, (UINT_PTR)theme_menu, "&Theme");
     AppendMenuA(settings_menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(settings_menu, MF_STRING, ID_SETTINGS_EXPORT, "&Export Settings...");
     AppendMenuA(settings_menu, MF_STRING, ID_SETTINGS_IMPORT, "&Import Settings...");
@@ -899,6 +917,45 @@ void app_on_command(App *app, WPARAM wParam) {
                     MessageBoxA(app->hwnd, "Settings imported successfully.\nSome changes may require restart.", "Import Settings", MB_ICONINFORMATION);
                 } else {
                     MessageBoxA(app->hwnd, "Failed to import settings.", "Import Settings", MB_ICONERROR);
+                }
+            }
+            break;
+        }
+
+        // Theme selection
+        case ID_THEME_CLASSIC_LIGHT:
+        case ID_THEME_CLASSIC_DARK:
+        case ID_THEME_MONOKAI:
+        case ID_THEME_SOLARIZED_LIGHT:
+        case ID_THEME_SOLARIZED_DARK:
+        case ID_THEME_DRACULA: {
+            const char *theme_id = NULL;
+            switch (LOWORD(wParam)) {
+                case ID_THEME_CLASSIC_LIGHT: theme_id = THEME_CLASSIC_LIGHT; break;
+                case ID_THEME_CLASSIC_DARK: theme_id = THEME_CLASSIC_DARK; break;
+                case ID_THEME_MONOKAI: theme_id = THEME_MONOKAI; break;
+                case ID_THEME_SOLARIZED_LIGHT: theme_id = THEME_SOLARIZED_LIGHT; break;
+                case ID_THEME_SOLARIZED_DARK: theme_id = THEME_SOLARIZED_DARK; break;
+                case ID_THEME_DRACULA: theme_id = THEME_DRACULA; break;
+            }
+            if (theme_id) {
+                const Theme *theme = theme_get_by_id(theme_id);
+                if (theme) {
+                    app_apply_theme(theme);
+                    // Update checkmarks in theme menu
+                    HMENU settings_menu = GetSubMenu(app->menu, 4); // Settings menu index
+                    HMENU theme_menu = GetSubMenu(settings_menu, 1); // Theme submenu index
+                    if (theme_menu) {
+                        // Uncheck all themes first
+                        CheckMenuItem(theme_menu, ID_THEME_CLASSIC_LIGHT, MF_UNCHECKED);
+                        CheckMenuItem(theme_menu, ID_THEME_CLASSIC_DARK, MF_UNCHECKED);
+                        CheckMenuItem(theme_menu, ID_THEME_MONOKAI, MF_UNCHECKED);
+                        CheckMenuItem(theme_menu, ID_THEME_SOLARIZED_LIGHT, MF_UNCHECKED);
+                        CheckMenuItem(theme_menu, ID_THEME_SOLARIZED_DARK, MF_UNCHECKED);
+                        CheckMenuItem(theme_menu, ID_THEME_DRACULA, MF_UNCHECKED);
+                        // Check selected theme
+                        CheckMenuItem(theme_menu, LOWORD(wParam), MF_CHECKED);
+                    }
                 }
             }
             break;

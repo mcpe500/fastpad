@@ -116,4 +116,7 @@ Plugin* app_plugin_get(App *app, const char *plugin_id);
 bool app_settings_export(App *app, const char *filepath);
 bool app_settings_import(App *app, const char *filepath);
 
+// Theme functions
+void app_apply_theme(const Theme *theme);
+
 #endif // APP_H
