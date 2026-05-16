@@ -257,6 +257,15 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
                 }
 
                 int x = RENDER_MARGIN_WIDTH - editor->viewport.scroll_x * editor->viewport.char_width;
+                
+                // FIX BUG: Segments before scroll position have negative x coordinates
+                // and would render off-screen. Skip these segments entirely.
+                if (x + segment_len * editor->viewport.char_width < RENDER_MARGIN_WIDTH) {
+                    chars_processed += segment_len;
+                    current_visual_line++;
+                    continue;
+                }
+                
                 if (sel_start_disp != -1) {
                     // FIX BUG: Text rendering with selection on wrapped lines
                     // The segment variables were renamed but logic wasn't updated
