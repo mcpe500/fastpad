@@ -686,7 +686,12 @@ void app_on_lbuttonup(App *app) {
 void app_on_setfocus(App *app) {
     Tab *tab = tab_manager_get_active(&app->tab_mgr);
     if (tab) {
+        // FIX: When focus returns to editor, ensure caret is visible
+        // Previously the caret position wasn't refreshed, causing it to
+        // appear at wrong position or not show at all
+        editor_scroll_to_caret(&tab->editor);
         ShowCaret(tab->hwnd);
+        InvalidateRect(tab->hwnd, NULL, FALSE);
     }
 }
 

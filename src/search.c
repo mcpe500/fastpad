@@ -2,6 +2,7 @@
 #include "errors.h"
 #include "buffer.h"
 #include "editor.h"
+#include <windows.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -118,6 +119,13 @@ static HWND g_find_dialog = NULL;  // Only used for singleton dialog detection
 static LRESULT CALLBACK FindSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     // Get per-instance data
     FindDialogData *data = (FindDialogData *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+    
+    // FIX BUG: Validate editor window handle before using it
+    // This prevents crashes if tab was closed while dialog was open
+    // or if editor pointer became stale after tab switch
+    if (data && data->editor && !IsWindow(data->editor->hwnd)) {
+        data->editor = NULL;  // Mark as invalid, prevent crash
+    }
     
     switch (msg) {
         case WM_COMMAND: {

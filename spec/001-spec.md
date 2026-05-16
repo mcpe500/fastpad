@@ -360,6 +360,16 @@ Selection must be drawn properly to avoid visual artifacts:
 - prefer simple structs and functions over abstraction-heavy patterns
 - no premature generalization
 
+## Bug Tracking
+
+Known bugs and their fixes are documented in `spec/BUG_FIXES.md`.
+
+When fixing bugs:
+1. Document the bug in BUG_FIXES.md with symptoms, root cause, and fix
+2. Add FIX comment in code at the bug location
+3. Verify fix compiles and passes tests
+4. Update version history in BUG_FIXES.md
+
 ## Build and Distribution
 
 The repo should support:

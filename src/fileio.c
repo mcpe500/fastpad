@@ -138,20 +138,21 @@ bool file_load(HWND hwnd, const char *filename, GapBuffer *buffer) {
         goto cleanup;
     }
 
-    // Copy text with normalized line endings
-    int dest_pos = 0;
+    // Copy text with normalized line endings using gap buffer API
+    // FIX: Use proper buffer_insert() calls to maintain gap buffer invariants
+    // instead of direct memory manipulation
+    TextPos insert_pos = 0;
     for (DWORD i = offset; i < bytesRead; i++) {
         if (fileData[i] == '\r' && i + 1 < bytesRead && fileData[i+1] == '\n') {
-            buffer->data[dest_pos++] = '\n';
+            char nl = '\n';
+            buffer_insert(buffer, insert_pos, &nl, 1);
+            insert_pos++;
             i++; // Skip LF
         } else {
-            buffer->data[dest_pos++] = fileData[i];
+            buffer_insert(buffer, insert_pos, &fileData[i], 1);
+            insert_pos++;
         }
     }
-
-    buffer->size = text_length;
-    buffer->gap_start = text_length;
-    buffer->gap_length = buffer->capacity - text_length;
 
     success = true;
 

@@ -323,6 +323,9 @@ void editor_get_selection(Editor *editor, TextPos *out_start, TextPos *out_end) 
 void editor_clear_selection(Editor *editor) {
     editor->selection.start = editor->caret;
     editor->selection.end = editor->caret;
+    // FIX: Ensure caret is scrolled into view after clearing selection
+    // Previously this was missing, causing caret to disappear after shift+arrow
+    editor_scroll_to_caret(editor);
     InvalidateRect(editor->hwnd, NULL, FALSE);
 }
 
