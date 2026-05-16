@@ -2,6 +2,7 @@
 #define APP_H
 
 #include "types.h"
+#include "plugin.h"
 
 // Initialize application
 bool app_init(App *app, HINSTANCE hInstance);
@@ -97,5 +98,22 @@ void app_toggle_highlight(App *app);
 LanguageType detect_language(const char *filename);
 void highlight_line(const char *line, int len, LanguageType lang, HighlightToken *tokens, int *token_count);
 COLORREF get_token_color(HighlightTokenType type);
+
+// Backup system functions
+bool app_backup_create(App *app, const char *filepath);
+bool app_backup_restore(App *app, const char *filepath, int version_index);
+const char* app_backup_get_dir(App *app);
+int app_backup_get_count(App *app, const char *filepath);
+bool app_backup_enable(App *app, bool enable);
+
+// Plugin system functions
+bool app_plugins_init(App *app);
+void app_plugins_shutdown(App *app);
+bool app_plugins_load(App *app);
+Plugin* app_plugin_get(App *app, const char *plugin_id);
+
+// Settings export/import
+bool app_settings_export(App *app, const char *filepath);
+bool app_settings_import(App *app, const char *filepath);
 
 #endif // APP_H

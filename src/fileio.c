@@ -437,6 +437,8 @@ EncodingType file_detect_encoding(const char *data, int length) {
 
 char* file_convert_encoding(const char *input, int input_len, int *output_len, 
                            EncodingType from_enc, EncodingType to_enc) {
+    (void)from_enc;
+    (void)to_enc;
     if (!input || input_len <= 0) {
         if (output_len) *output_len = 0;
         return NULL;

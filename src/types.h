@@ -201,6 +201,11 @@ typedef struct {
     // Custom shortcuts
     ShortcutBinding shortcuts[MAX_SHORTCUTS];
     int shortcut_count;
+    // Backup system
+    bool backup_enabled;        // Enable auto-backup
+    char backup_dir[MAX_PATH];   // Backup directory path
+    // Plugin system
+    bool plugins_enabled;       // Enable plugin system
 } App;
 
 // Global app instance

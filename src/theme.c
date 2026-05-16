@@ -257,11 +257,13 @@ void theme_color_to_hex(COLORREF color, char *out, size_t out_size) {
 }
 
 void theme_load_settings(const char *config_path) {
+    (void)config_path;
     // Will load theme settings from config file
     // Implementation in app.c
 }
 
 void theme_save_settings(const char *config_path) {
+    (void)config_path;
     // Will save theme settings to config file
     // Implementation in app.c
 }

@@ -3,6 +3,7 @@
 #include "types.h"          /* for extern App g_app */
 #include "theme.h"
 #include "app.h"            /* for g_app, syntax highlighting */
+#include "tab_manager.h"    /* for tab_manager_get_active */
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>        /* for SIZE struct + GDI functions */
@@ -134,6 +135,288 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
     GetClientRect(editor->hwnd, &client_rect);
     int width = client_rect.right;
     int height = client_rect.bottom;
+
+    // Handle split view rendering
+    if (g_app.split_mode != SPLIT_NONE) {
+        // Calculate split dimensions
+        int split1_left, split1_top, split1_width, split1_height;
+        int split2_left, split2_top, split2_width, split2_height;
+        
+        if (g_app.split_mode == SPLIT_HORIZONTAL) {
+            // Horizontal split - side by side
+            int divider_x = (int)(width * g_app.split_ratio);
+            
+            // First split (left)
+            split1_left = 0;
+            split1_top = tab_bar_offset;
+            split1_width = divider_x;
+            split1_height = height - tab_bar_offset;
+            
+            // Second split (right)
+            split2_left = divider_x + 1;  // +1 for divider line
+            split2_top = tab_bar_offset;
+            split2_width = width - divider_x - 1;
+            split2_height = height - tab_bar_offset;
+            
+            // Draw divider line
+            HBRUSH divider_brush = CreateSolidBrush(g_app.current_theme->colors.margin_bg);
+            RECT divider_rect = { divider_x, tab_bar_offset, divider_x + 1, height };
+            FillRect(hdc, &divider_rect, divider_brush);
+            DeleteObject(divider_brush);
+        } else {
+            // Vertical split - stacked
+            int divider_y = tab_bar_offset + (int)((height - tab_bar_offset) * g_app.split_ratio);
+            
+            // First split (top)
+            split1_left = 0;
+            split1_top = tab_bar_offset;
+            split1_width = width;
+            split1_height = divider_y - tab_bar_offset;
+            
+            // Second split (bottom)
+            split2_left = 0;
+            split2_top = divider_y + 1;  // +1 for divider line
+            split2_width = width;
+            split2_height = height - divider_y - 1;
+            
+            // Draw divider line
+            HBRUSH divider_brush = CreateSolidBrush(g_app.current_theme->colors.margin_bg);
+            RECT divider_rect = { 0, divider_y, width, divider_y + 1 };
+            FillRect(hdc, &divider_rect, divider_brush);
+            DeleteObject(divider_brush);
+        }
+        
+        // Create memory DCs for each split
+        HDC mem_dc1 = CreateCompatibleDC(hdc);
+        HBITMAP mem_bm1 = CreateCompatibleBitmap(hdc, split1_width, split1_height);
+        SelectObject(mem_dc1, mem_bm1);
+        
+        HDC mem_dc2 = CreateCompatibleDC(hdc);
+        HBITMAP mem_bm2 = CreateCompatibleBitmap(hdc, split2_width, split2_height);
+        SelectObject(mem_dc2, mem_bm2);
+        
+        // Paint first split
+        BitBlt(mem_dc1, 0, 0, split1_width, split1_height, hdc, 0, tab_bar_offset, SRCCOPY);
+        // For first split, we use active_split's scroll or split 0's scroll
+        // We'll use the same buffer but different viewports
+        
+        // For simplicity, render to each split using the same content
+        // but potentially different scroll offsets
+        // Split 0 uses scroll from editor, Split 1 uses scroll from second viewport stored elsewhere
+        
+        // For simplicity, both viewports share the same scroll position
+        // Each viewport could have its own scroll, but that requires more state
+        
+        // Render to first split
+        {
+            HBRUSH bg_brush = CreateSolidBrush(g_app.current_theme->colors.editor_bg);
+            RECT rc = {0, 0, split1_width, split1_height};
+            FillRect(mem_dc1, &rc, bg_brush);
+            DeleteObject(bg_brush);
+            
+            // Calculate visible lines for this split
+            int total_lines = buffer_line_count(&editor->buffer);
+            
+            // Render content (simplified - same content in both splits)
+            int current_visual_line = editor->viewport.scroll_y;
+            int logical_line = 0;
+            
+            // Find starting logical line based on scroll
+            int vl_count = 0;
+            for (int l = 0; l < total_lines && vl_count < current_visual_line; l++) {
+                TextPos l_start = buffer_line_start(&editor->buffer, l);
+                TextPos l_end = buffer_line_end(&editor->buffer, l);
+                int l_len = l_end - l_start;
+                int vis_lines_for_l = 1;
+                if (g_app.word_wrap && l_len > editor->viewport.visible_cols) {
+                    vis_lines_for_l = (l_len + editor->viewport.visible_cols - 1) / editor->viewport.visible_cols;
+                }
+                vl_count += vis_lines_for_l;
+                logical_line = l + 1;
+            }
+            
+            // Render visible lines
+            int y_pos = 0;
+            while (logical_line < total_lines && y_pos < split1_height) {
+                TextPos l_start = buffer_line_start(&editor->buffer, logical_line);
+                TextPos l_end = buffer_line_end(&editor->buffer, logical_line);
+                int l_len = l_end - l_start;
+                
+                char *line_text = buffer_get_text(&editor->buffer, l_start, l_end);
+                if (line_text) {
+                    int display_length = l_len;
+                    char *display_text = expand_tabs(line_text, l_len, &display_length);
+                    if (display_text) {
+                        // Draw line number gutter
+                        HBRUSH margin_brush = CreateSolidBrush(g_app.current_theme->colors.margin_bg);
+                        RECT margin_rect = { 0, y_pos, RENDER_MARGIN_WIDTH, y_pos + editor->viewport.line_height };
+                        FillRect(mem_dc1, &margin_rect, margin_brush);
+                        DeleteObject(margin_brush);
+                        
+                        char line_num_str[32];
+                        snprintf(line_num_str, sizeof(line_num_str), "%d", logical_line + 1);
+                        SIZE text_size = {0};
+                        GetTextExtentPoint32A(mem_dc1, line_num_str, (int)strlen(line_num_str), &text_size);
+                        SetTextColor(mem_dc1, g_app.current_theme->colors.margin_text);
+                        SetBkMode(mem_dc1, TRANSPARENT);
+                        TextOutA(mem_dc1, RENDER_MARGIN_WIDTH - text_size.cx - 5, y_pos, line_num_str, (int)strlen(line_num_str));
+                        
+                        // Draw text (simplified without word wrap handling)
+                        SetTextColor(mem_dc1, g_app.current_theme->colors.editor_text);
+                        SetBkMode(mem_dc1, TRANSPARENT);
+                        int text_len = display_length;
+                        if (text_len > split1_width / editor->viewport.char_width) {
+                            text_len = split1_width / editor->viewport.char_width;
+                        }
+                        TextOutA(mem_dc1, RENDER_MARGIN_WIDTH, y_pos, display_text, text_len);
+                        
+                        free(display_text);
+                    }
+                    free(line_text);
+                }
+                
+                y_pos += editor->viewport.line_height;
+                logical_line++;
+            }
+        }
+        
+        // Copy first split to screen
+        BitBlt(hdc, split1_left, split1_top, split1_width, split1_height, mem_dc1, 0, 0, SRCCOPY);
+        
+        // Render second split (same content but can have different scroll - using same for now)
+        {
+            HBRUSH bg_brush = CreateSolidBrush(g_app.current_theme->colors.editor_bg);
+            RECT rc = {0, 0, split2_width, split2_height};
+            FillRect(mem_dc2, &rc, bg_brush);
+            DeleteObject(bg_brush);
+            
+            int total_lines = buffer_line_count(&editor->buffer);
+            int y_pos = 0;
+            int logical_line = 0;
+            
+            // Find starting logical line based on scroll
+            int vl_count = 0;
+            for (int l = 0; l < total_lines && vl_count < editor->viewport.scroll_y; l++) {
+                TextPos l_start = buffer_line_start(&editor->buffer, l);
+                TextPos l_end = buffer_line_end(&editor->buffer, l);
+                int l_len = l_end - l_start;
+                int vis_lines_for_l = 1;
+                if (g_app.word_wrap && l_len > editor->viewport.visible_cols) {
+                    vis_lines_for_l = (l_len + editor->viewport.visible_cols - 1) / editor->viewport.visible_cols;
+                }
+                vl_count += vis_lines_for_l;
+                logical_line = l + 1;
+            }
+            
+            while (logical_line < total_lines && y_pos < split2_height) {
+                TextPos l_start = buffer_line_start(&editor->buffer, logical_line);
+                TextPos l_end = buffer_line_end(&editor->buffer, logical_line);
+                int l_len = l_end - l_start;
+                
+                char *line_text = buffer_get_text(&editor->buffer, l_start, l_end);
+                if (line_text) {
+                    int display_length = l_len;
+                    char *display_text = expand_tabs(line_text, l_len, &display_length);
+                    if (display_text) {
+                        // Draw line number gutter
+                        HBRUSH margin_brush = CreateSolidBrush(g_app.current_theme->colors.margin_bg);
+                        RECT margin_rect = { 0, y_pos, RENDER_MARGIN_WIDTH, y_pos + editor->viewport.line_height };
+                        FillRect(mem_dc2, &margin_rect, margin_brush);
+                        DeleteObject(margin_brush);
+                        
+                        char line_num_str[32];
+                        snprintf(line_num_str, sizeof(line_num_str), "%d", logical_line + 1);
+                        SIZE text_size = {0};
+                        GetTextExtentPoint32A(mem_dc2, line_num_str, (int)strlen(line_num_str), &text_size);
+                        SetTextColor(mem_dc2, g_app.current_theme->colors.margin_text);
+                        SetBkMode(mem_dc2, TRANSPARENT);
+                        TextOutA(mem_dc2, RENDER_MARGIN_WIDTH - text_size.cx - 5, y_pos, line_num_str, (int)strlen(line_num_str));
+                        
+                        // Draw text
+                        SetTextColor(mem_dc2, g_app.current_theme->colors.editor_text);
+                        SetBkMode(mem_dc2, TRANSPARENT);
+                        int text_len = display_length;
+                        if (text_len > split2_width / editor->viewport.char_width) {
+                            text_len = split2_width / editor->viewport.char_width;
+                        }
+                        TextOutA(mem_dc2, RENDER_MARGIN_WIDTH, y_pos, display_text, text_len);
+                        
+                        free(display_text);
+                    }
+                    free(line_text);
+                }
+                
+                y_pos += editor->viewport.line_height;
+                logical_line++;
+            }
+        }
+        
+        // Copy second split to screen
+        BitBlt(hdc, split2_left, split2_top, split2_width, split2_height, mem_dc2, 0, 0, SRCCOPY);
+        
+        // Cleanup
+        DeleteObject(mem_bm1);
+        DeleteDC(mem_dc1);
+        DeleteObject(mem_bm2);
+        DeleteDC(mem_dc2);
+        
+        // Draw caret in focused split if editor has focus
+        if (GetFocus() == editor->hwnd) {
+            int caret_display_col = get_caret_display_col(editor);
+            LineCol lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
+            
+            int caret_visual_line = 0;
+            for (int l = 0; l < lc.line; l++) {
+                TextPos l_start = buffer_line_start(&editor->buffer, l);
+                TextPos l_end = buffer_line_end(&editor->buffer, l);
+                int l_len = l_end - l_start;
+                if (g_app.word_wrap && l_len > editor->viewport.visible_cols) {
+                    caret_visual_line += (l_len + editor->viewport.visible_cols - 1) / editor->viewport.visible_cols;
+                } else {
+                    caret_visual_line++;
+                }
+            }
+            
+            int caret_x, caret_y;
+            int split_focus = g_app.active_split;
+            
+            // Calculate caret position based on which split has focus
+            if (g_app.split_mode == SPLIT_HORIZONTAL) {
+                int divider_x = (int)(width * g_app.split_ratio);
+                if (split_focus == 0) {
+                    // Left split
+                    caret_x = RENDER_MARGIN_WIDTH + (caret_display_col - editor->viewport.scroll_x) * editor->viewport.char_width;
+                    caret_y = tab_bar_offset + (caret_visual_line - editor->viewport.scroll_y) * editor->viewport.line_height;
+                } else {
+                    // Right split
+                    caret_x = divider_x + 1 + RENDER_MARGIN_WIDTH + (caret_display_col - editor->viewport.scroll_x) * editor->viewport.char_width;
+                    caret_y = tab_bar_offset + (caret_visual_line - editor->viewport.scroll_y) * editor->viewport.line_height;
+                }
+            } else {
+                // Vertical split
+                int divider_y = tab_bar_offset + (int)((height - tab_bar_offset) * g_app.split_ratio);
+                if (split_focus == 0) {
+                    // Top split
+                    caret_x = RENDER_MARGIN_WIDTH + (caret_display_col - editor->viewport.scroll_x) * editor->viewport.char_width;
+                    caret_y = tab_bar_offset + (caret_visual_line - editor->viewport.scroll_y) * editor->viewport.line_height;
+                } else {
+                    // Bottom split
+                    caret_x = RENDER_MARGIN_WIDTH + (caret_display_col - editor->viewport.scroll_x) * editor->viewport.char_width;
+                    caret_y = divider_y + 1 + (caret_visual_line - editor->viewport.scroll_y) * editor->viewport.line_height;
+                }
+            }
+            
+            CreateCaret(editor->hwnd, NULL, 1, editor->viewport.line_height);
+            SetCaretPos(caret_x, caret_y);
+            ShowCaret(editor->hwnd);
+        } else {
+            HideCaret(editor->hwnd);
+        }
+        
+        return;
+    }
+    
+    // Original single-pane rendering path
 
     HDC mem_dc = CreateCompatibleDC(hdc);
     HBITMAP mem_bm = CreateCompatibleBitmap(hdc, width, height);
@@ -314,9 +597,89 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
                         TextOutA(mem_dc, after_x, visual_line_y, display_text + chars_processed + after_start_in_seg, after_len);
                     }
                 } else {
-                    SetTextColor(mem_dc, g_app.current_theme->colors.editor_text);
-                    SetBkMode(mem_dc, TRANSPARENT);
-                    TextOutA(mem_dc, x, visual_line_y, display_text + chars_processed, segment_len);
+                    // Syntax highlighting mode - tokenize and render with colors
+                    if (g_app.highlight_enabled) {
+                        // Get language for current tab
+                        Tab *active_tab = tab_manager_get_active(&g_app.tab_mgr);
+                        LanguageType lang = LANG_NONE;
+                        if (active_tab) {
+                            lang = detect_language(active_tab->filename);
+                        }
+                        
+                        // Tokenize the line for highlighting
+                        HighlightToken tokens[32];
+                        int token_count = 0;
+                        highlight_line(display_text + chars_processed, segment_len, lang, tokens, &token_count);
+                        
+                        // Render text with syntax highlighting
+                        int seg_x = x;
+                        int remaining_len = segment_len;
+                        int text_offset = chars_processed;
+                        
+                        // Sort tokens by start position and render each segment
+                        // Find the first token that starts at or after scroll position
+                        for (int t = 0; t < token_count && remaining_len > 0; t++) {
+                            HighlightToken *tok = &tokens[t];
+                            
+                            // Calculate token boundaries relative to our segment
+                            int tok_start = tok->start;
+                            int tok_end = tok->end;
+                            
+                            // Skip tokens before scroll position
+                            if (tok_end <= seg_start_disp - chars_processed) continue;
+                            if (tok_start < seg_start_disp - chars_processed) {
+                                tok_start = seg_start_disp - chars_processed;
+                            }
+                            
+                            // Calculate render start position
+                            int render_start = tok_start;
+                            if (render_start < 0) render_start = 0;
+                            if (render_start >= segment_len) break;
+                            
+                            // Render text before this token if any
+                            if (render_start > (segment_len - remaining_len)) {
+                                int pre_len = render_start - (segment_len - remaining_len);
+                                if (pre_len > 0) {
+                                    SetTextColor(mem_dc, g_app.current_theme->colors.editor_text);
+                                    SetBkMode(mem_dc, TRANSPARENT);
+                                    int pre_x = seg_x + (render_start - (segment_len - remaining_len)) * editor->viewport.char_width;
+                                    TextOutA(mem_dc, pre_x, visual_line_y, 
+                                             display_text + text_offset + (render_start - (segment_len - remaining_len)), 
+                                             pre_len);
+                                }
+                            }
+                            
+                            // Render the token itself
+                            int tok_len = tok_end - tok_start;
+                            if (tok_len > segment_len - tok_start) tok_len = segment_len - tok_start;
+                            if (tok_len > 0 && tok_start < segment_len) {
+                                COLORREF color = get_token_color(tok->type);
+                                SetTextColor(mem_dc, color);
+                                SetBkMode(mem_dc, TRANSPARENT);
+                                int tok_x = seg_x + (tok_start - (segment_len - remaining_len)) * editor->viewport.char_width;
+                                TextOutA(mem_dc, tok_x, visual_line_y, 
+                                         display_text + text_offset + tok_start, 
+                                         tok_len);
+                            }
+                            
+                            remaining_len -= tok_len;
+                        }
+                        
+                        // Render any remaining text without highlighting
+                        if (remaining_len > 0) {
+                            SetTextColor(mem_dc, g_app.current_theme->colors.editor_text);
+                            SetBkMode(mem_dc, TRANSPARENT);
+                            TextOutA(mem_dc, seg_x + (segment_len - remaining_len) * editor->viewport.char_width, 
+                                     visual_line_y, 
+                                     display_text + text_offset + (segment_len - remaining_len), 
+                                     remaining_len);
+                        }
+                    } else {
+                        // No highlighting - render in normal color
+                        SetTextColor(mem_dc, g_app.current_theme->colors.editor_text);
+                        SetBkMode(mem_dc, TRANSPARENT);
+                        TextOutA(mem_dc, x, visual_line_y, display_text + chars_processed, segment_len);
+                    }
                 }
                 chars_processed += segment_len;
             } else {

@@ -8,6 +8,9 @@
 #include "errors.h"
 #include "log.h"
 #include "theme.h"
+#include "backup.h"
+#include "plugin.h"
+#include "settings.h"
 #include <commctrl.h>
 #include <shlobj.h>
 #include <stdio.h>
@@ -57,6 +60,12 @@ static void recent_files_save(App *app);
 #define ID_SETTINGS_SHORTCUTS 4040
 #define ID_FILE_ENCODING 4050
 #define ID_FILE_LINEENDING 4060
+#define ID_TOOLS_BACKUP 4070
+#define ID_TOOLS_BACKUP_CREATE 4071
+#define ID_TOOLS_BACKUP_RESTORE 4072
+#define ID_TOOLS_PLUGINS 4073
+#define ID_SETTINGS_EXPORT 4074
+#define ID_SETTINGS_IMPORT 4075
 
 App g_app;
 
@@ -360,6 +369,13 @@ HWND app_create_window(App *app, HINSTANCE hInstance) {
     AppendMenuA(tools_menu, MF_STRING, ID_TOOLS_FORMAT_JSON, "Format &JSON\tCtrl+Shift+F");
     AppendMenuA(tools_menu, MF_STRING, ID_TOOLS_MINIFY_JSON, "&Minify JSON\tCtrl+Shift+M");
     AppendMenuA(tools_menu, MF_STRING, ID_TOOLS_VALIDATE_JSON, "&Validate JSON");
+    AppendMenuA(tools_menu, MF_SEPARATOR, 0, NULL);
+    // Backup submenu
+    HMENU backup_menu = CreatePopupMenu();
+    AppendMenuA(backup_menu, MF_STRING, ID_TOOLS_BACKUP_CREATE, "&Create Backup");
+    AppendMenuA(backup_menu, MF_STRING, ID_TOOLS_BACKUP_RESTORE, "&Restore from Backup...");
+    AppendMenuA(tools_menu, MF_POPUP, (UINT_PTR)backup_menu, "&Backup");
+    AppendMenuA(tools_menu, MF_STRING, ID_TOOLS_PLUGINS, "&Plugins...");
     AppendMenuA(app->menu, MF_POPUP, (UINT_PTR)tools_menu, "&Tools");
     
     // View menu
@@ -391,6 +407,9 @@ HWND app_create_window(App *app, HINSTANCE hInstance) {
     // Settings menu
     HMENU settings_menu = CreatePopupMenu();
     AppendMenuA(settings_menu, MF_STRING, ID_SETTINGS_SHORTCUTS, "&Keyboard Shortcuts...");
+    AppendMenuA(settings_menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(settings_menu, MF_STRING, ID_SETTINGS_EXPORT, "&Export Settings...");
+    AppendMenuA(settings_menu, MF_STRING, ID_SETTINGS_IMPORT, "&Import Settings...");
     AppendMenuA(app->menu, MF_POPUP, (UINT_PTR)settings_menu, "&Settings");
     
     // Help menu
@@ -788,6 +807,102 @@ void app_on_command(App *app, WPARAM wParam) {
                        "Keyboard Shortcuts",
                        MB_ICONINFORMATION);
             break;
+
+        case ID_TOOLS_BACKUP_CREATE: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab && strcmp(tab->filename, "Untitled") != 0) {
+                app_backup_create(app, tab->filename);
+                MessageBoxA(app->hwnd, "Backup created successfully.", "Backup", MB_ICONINFORMATION);
+            } else {
+                MessageBoxA(app->hwnd, "Please save the file first before creating a backup.", "Backup", MB_ICONWARNING);
+            }
+            break;
+        }
+
+        case ID_TOOLS_BACKUP_RESTORE: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab && strcmp(tab->filename, "Untitled") != 0) {
+                int count = app_backup_get_count(app, tab->filename);
+                if (count == 0) {
+                    MessageBoxA(app->hwnd, "No backups found for this file.", "Restore Backup", MB_ICONINFORMATION);
+                } else {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "Found %d backup(s). Restoring will replace current content.", count);
+                    if (MessageBoxA(app->hwnd, msg, "Restore Backup", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                        app_backup_restore(app, tab->filename, 0);  // Restore most recent
+                        InvalidateRect(tab->hwnd, NULL, TRUE);
+                    }
+                }
+            } else {
+                MessageBoxA(app->hwnd, "No file is currently open.", "Restore Backup", MB_ICONWARNING);
+            }
+            break;
+        }
+
+        case ID_TOOLS_PLUGINS: {
+            // Show plugins dialog
+            int count = 0;
+            Plugin *plugins = plugin_get_all(&count);
+            if (count == 0) {
+                MessageBoxA(app->hwnd, "No plugins installed.\n\nPlace plugin folders in:\n%APPDATA%\\FastPad\\plugins", "Plugins", MB_ICONINFORMATION);
+            } else {
+                char info[1024] = "Installed Plugins:\n\n";
+                for (int i = 0; i < count; i++) {
+                    char line[256];
+                    snprintf(line, sizeof(line), "• %s v%s - %s\n",
+                             plugins[i].manifest.name,
+                             plugins[i].manifest.version,
+                             plugins[i].state == PLUGIN_STATE_LOADED ? "Loaded" : "Error");
+                    strncat(info, line, sizeof(info) - strlen(info) - 1);
+                }
+                MessageBoxA(app->hwnd, info, "Plugins", MB_ICONINFORMATION);
+            }
+            break;
+        }
+
+        case ID_SETTINGS_EXPORT: {
+            char filepath[MAX_PATH] = {0};
+            // Use save dialog
+            OPENFILENAMEA ofn = {0};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = app->hwnd;
+            ofn.lpstrFilter = "JSON Files\0*.json\0All Files\0*.*\0";
+            ofn.lpstrFile = filepath;
+            ofn.nMaxFile = MAX_PATH;
+            ofn.lpstrTitle = "Export Settings";
+            ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+            ofn.lpstrDefExt = "json";
+
+            if (GetSaveFileNameA(&ofn)) {
+                if (app_settings_export(app, filepath)) {
+                    MessageBoxA(app->hwnd, "Settings exported successfully.", "Export Settings", MB_ICONINFORMATION);
+                } else {
+                    MessageBoxA(app->hwnd, "Failed to export settings.", "Export Settings", MB_ICONERROR);
+                }
+            }
+            break;
+        }
+
+        case ID_SETTINGS_IMPORT: {
+            char filepath[MAX_PATH] = {0};
+            OPENFILENAMEA ofn = {0};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = app->hwnd;
+            ofn.lpstrFilter = "JSON Files\0*.json\0All Files\0*.*\0";
+            ofn.lpstrFile = filepath;
+            ofn.nMaxFile = MAX_PATH;
+            ofn.lpstrTitle = "Import Settings";
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+
+            if (GetOpenFileNameA(&ofn)) {
+                if (app_settings_import(app, filepath)) {
+                    MessageBoxA(app->hwnd, "Settings imported successfully.\nSome changes may require restart.", "Import Settings", MB_ICONINFORMATION);
+                } else {
+                    MessageBoxA(app->hwnd, "Failed to import settings.", "Import Settings", MB_ICONERROR);
+                }
+            }
+            break;
+        }
 
         // Encoding selection (ID_FILE_ENCODING + 0-4)
         case ID_FILE_ENCODING + 0:
@@ -1911,4 +2026,114 @@ void highlight_line(const char *line, int len, LanguageType lang, HighlightToken
 
         i++;
     }
+}
+
+// ============================================================================
+// Backup System Functions
+// ============================================================================
+
+bool app_backup_create(App *app, const char *filepath) {
+    (void)app;
+    
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (!tab) return false;
+    
+    if (!filepath || strcmp(filepath, "Untitled") == 0) {
+        return false;
+    }
+    
+    // Get buffer data
+    int len = buffer_length(&tab->editor.buffer);
+    if (len <= 0) return false;
+    
+    char *data = buffer_get_text(&tab->editor.buffer, 0, (TextPos)len);
+    if (!data) return false;
+    
+    bool result = backup_create(filepath, data, (size_t)len);
+    free(data);
+    
+    return result;
+}
+
+bool app_backup_restore(App *app, const char *filepath, int version_index) {
+    (void)app;
+    
+    if (!filepath) return false;
+    
+    void *data = NULL;
+    size_t size = 0;
+    
+    BackupList *list = backup_list(filepath);
+    if (!list) return false;
+    
+    bool result = false;
+    if (version_index >= 0 && version_index < list->count) {
+        if (backup_restore(list, version_index, &data, &size)) {
+            // Load into active tab
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) {
+                buffer_delete(&tab->editor.buffer, 0, buffer_length(&tab->editor.buffer));
+                buffer_insert(&tab->editor.buffer, 0, (const char *)data, (int)size);
+                result = true;
+            }
+            free(data);
+        }
+    }
+    
+    backup_list_free(list);
+    return result;
+}
+
+const char* app_backup_get_dir(App *app) {
+    (void)app;
+    return backup_get_directory();
+}
+
+int app_backup_get_count(App *app, const char *filepath) {
+    (void)app;
+    return backup_count(filepath);
+}
+
+bool app_backup_enable(App *app, bool enable) {
+    app->backup_enabled = enable;
+    return true;
+}
+
+// ============================================================================
+// Plugin System Functions
+// ============================================================================
+
+bool app_plugins_init(App *app) {
+    (void)app;
+    plugin_init();
+    return true;
+}
+
+void app_plugins_shutdown(App *app) {
+    (void)app;
+    plugin_shutdown();
+}
+
+bool app_plugins_load(App *app) {
+    (void)app;
+    return plugin_load_all();
+}
+
+Plugin* app_plugin_get(App *app, const char *plugin_id) {
+    (void)app;
+    return plugin_get(plugin_id);
+}
+
+// ============================================================================
+// Settings Export/Import Functions
+// ============================================================================
+
+bool app_settings_export(App *app, const char *filepath) {
+    (void)app;
+    return settings_export_to_file(filepath, SETTINGS_CATEGORY_ALL);
+}
+
+bool app_settings_import(App *app, const char *filepath) {
+    (void)app;
+    return settings_import_from_file(filepath, SETTINGS_CATEGORY_ALL);
 }
