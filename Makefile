@@ -18,7 +18,8 @@ SRCS = $(SRCDIR)/main.c \
        $(SRCDIR)/render.c \
        $(SRCDIR)/search.c \
        $(SRCDIR)/tab_manager.c \
-       $(SRCDIR)/log.c
+       $(SRCDIR)/log.c \
+       $(SRCDIR)/theme.c
 
 TEST_SRCS = tests/unit_tests.c
 

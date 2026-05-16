@@ -2,6 +2,7 @@
 #define TYPES_H
 
 #include "core_types.h"
+#include "theme.h"
 #include <windows.h>
 
 // Editor viewport state
@@ -65,6 +66,8 @@ typedef struct {
     HWND hwnd;
     bool running;
     bool shutting_down;  // Flag to prevent auto-creating tabs during shutdown
+    Theme *current_theme;    // Current active theme
+    FontSettings font_settings; // Font settings for editor
 } App;
 
 // Global app instance

@@ -1,6 +1,7 @@
 #include "render.h"
 #include "buffer.h"
 #include "types.h"          /* for extern App g_app */
+#include "theme.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>        /* for SIZE struct + GDI functions */
@@ -77,10 +78,11 @@ int get_caret_display_col(Editor *editor) {
 }
 
 bool render_init(Editor *editor) {
+    FontSettings *fs = &g_app.font_settings;
     editor->font = CreateFontA(
-        FONT_HEIGHT, FONT_WIDTH, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        fs->font_size, FONT_WIDTH, 0, 0, fs->bold ? FW_BOLD : FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        DEFAULT_QUALITY, FIXED_PITCH | FF_DONTCARE, "Consolas"
+        DEFAULT_QUALITY, FIXED_PITCH | FF_DONTCARE, fs->font_family
     );
     if (!editor->font) editor->font = GetStockObject(SYSTEM_FIXED_FONT);
     
@@ -135,7 +137,7 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
     HBITMAP old_bm = (HBITMAP)SelectObject(mem_dc, mem_bm);
     HFONT old_font = (HFONT)SelectObject(mem_dc, editor->font);
 
-    HBRUSH bg_brush = CreateSolidBrush(RGB(255, 255, 255));
+    HBRUSH bg_brush = CreateSolidBrush(g_app.current_theme->colors.editor_bg);
     FillRect(mem_dc, &client_rect, bg_brush);
     DeleteObject(bg_brush);
 
@@ -201,7 +203,7 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
             
             if (visual_line_y >= 0 && visual_line_y < height) {
                 // 1. Draw Margin Background
-                HBRUSH margin_brush = CreateSolidBrush(RGB(240, 240, 240));
+                HBRUSH margin_brush = CreateSolidBrush(g_app.current_theme->colors.margin_bg);
                 RECT margin_rect = { 0, visual_line_y, RENDER_MARGIN_WIDTH, visual_line_y + editor->viewport.line_height };
                 FillRect(mem_dc, &margin_rect, margin_brush);
                 DeleteObject(margin_brush);
@@ -214,7 +216,7 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
                 SIZE text_size = {0};
                 GetTextExtentPoint32A(mem_dc, line_num_str, (int)strlen(line_num_str), &text_size);
 
-                SetTextColor(mem_dc, RGB(128, 128, 128));   /* slightly darker for better visibility */
+                SetTextColor(mem_dc, g_app.current_theme->colors.margin_text);   /* slightly darker for better visibility */
                 SetBkMode(mem_dc, TRANSPARENT);
                 
                 int num_width = text_size.cx;
@@ -250,7 +252,7 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
                         int x1 = RENDER_MARGIN_WIDTH + (intersect_start - editor->viewport.scroll_x) * editor->viewport.char_width;
                         int x2 = RENDER_MARGIN_WIDTH + (intersect_end - editor->viewport.scroll_x) * editor->viewport.char_width;
                         RECT sel_rect = { x1, visual_line_y, x2, visual_line_y + editor->viewport.line_height };
-                        HBRUSH sel_brush = CreateSolidBrush(RGB(0, 120, 215));
+                        HBRUSH sel_brush = CreateSolidBrush(g_app.current_theme->colors.selection_bg);
                         FillRect(mem_dc, &sel_rect, sel_brush);
                         DeleteObject(sel_brush);
                     }
@@ -279,7 +281,7 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
                     }
                     
                     if (before_sel_len > 0) {
-                        SetTextColor(mem_dc, RGB(0, 0, 0));
+                        SetTextColor(mem_dc, g_app.current_theme->colors.editor_text);
                         SetBkMode(mem_dc, TRANSPARENT);
                         TextOutA(mem_dc, x, visual_line_y, display_text + chars_processed, before_sel_len);
                     }
@@ -292,7 +294,7 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
                     int sel_len_in_seg = sel_end_in_seg - sel_start_in_seg;
                     
                     if (sel_len_in_seg > 0) {
-                        SetTextColor(mem_dc, RGB(255, 255, 255));
+                        SetTextColor(mem_dc, g_app.current_theme->colors.selection_text);
                         SetBkMode(mem_dc, TRANSPARENT);
                         int sel_x = x + sel_start_in_seg * editor->viewport.char_width;
                         TextOutA(mem_dc, sel_x, visual_line_y, display_text + chars_processed + sel_start_in_seg, sel_len_in_seg);
@@ -302,14 +304,14 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
                     int after_start_in_seg = (sel_end_disp > seg_start_disp) ? 
                         (sel_end_disp - seg_start_disp) : 0;
                     if (after_start_in_seg < segment_len) {
-                        SetTextColor(mem_dc, RGB(0, 0, 0));
+                        SetTextColor(mem_dc, g_app.current_theme->colors.editor_text);
                         SetBkMode(mem_dc, TRANSPARENT);
                         int after_len = segment_len - after_start_in_seg;
                         int after_x = x + after_start_in_seg * editor->viewport.char_width;
                         TextOutA(mem_dc, after_x, visual_line_y, display_text + chars_processed + after_start_in_seg, after_len);
                     }
                 } else {
-                    SetTextColor(mem_dc, RGB(0, 0, 0));
+                    SetTextColor(mem_dc, g_app.current_theme->colors.editor_text);
                     SetBkMode(mem_dc, TRANSPARENT);
                     TextOutA(mem_dc, x, visual_line_y, display_text + chars_processed, segment_len);
                 }

@@ -7,6 +7,7 @@
 #include "tab_manager.h"
 #include "errors.h"
 #include "log.h"
+#include "theme.h"
 #include <commctrl.h>
 #include <stdio.h>
 #include <string.h>
@@ -195,6 +196,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 bool app_init(App *app, HINSTANCE hInstance) {
     memset(app, 0, sizeof(App));
+
+    // Initialize with default theme (Classic Light)
+    app->current_theme = (Theme *)theme_get_by_id(THEME_CLASSIC_LIGHT);
+    strncpy(app->font_settings.font_family, "Consolas", sizeof(app->font_settings.font_family) - 1);
+    app->font_settings.font_family[sizeof(app->font_settings.font_family) - 1] = '\0';
+    app->font_settings.font_size = 14;
+    app->font_settings.line_height = 100;
+    app->font_settings.bold = false;
 
     // Initialize common controls for status bar and tab control
     INITCOMMONCONTROLSEX icex = {0};
@@ -720,4 +729,35 @@ void app_on_mousewheel(App *app, int delta) {
     }
     
     InvalidateRect(tab->hwnd, NULL, FALSE);
+}
+
+void app_apply_theme(const Theme *theme) {
+    if (!theme) return;
+    
+    g_app.current_theme = (Theme *)theme;
+    g_app.font_settings = theme->font;
+    
+    // Reload font for all tabs
+    for (int i = 0; i < g_app.tab_mgr.count; i++) {
+        Tab *tab = &g_app.tab_mgr.tabs[i];
+        // Recreate font
+        HFONT old_font = tab->editor.font;
+        tab->editor.font = CreateFontA(
+            g_app.font_settings.font_size, 
+            8, // FONT_WIDTH
+            0, 0, 
+            g_app.font_settings.bold ? FW_BOLD : FW_NORMAL, 
+            FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY, FIXED_PITCH | FF_DONTCARE, 
+            g_app.font_settings.font_family
+        );
+        if (!tab->editor.font) {
+            tab->editor.font = GetStockObject(SYSTEM_FIXED_FONT);
+        }
+        if (old_font) DeleteObject(old_font);
+    }
+    
+    // Trigger redraw
+    InvalidateRect(g_app.hwnd, NULL, TRUE);
 }
