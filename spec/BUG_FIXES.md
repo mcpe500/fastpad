@@ -242,6 +242,18 @@ Buffer tests use AddressSanitizer to catch memory corruption issues that may not
 
 ## Version History
 
+- **v2.0.0** - Feature pack release (all phases)
+  - Phase 1: Auto save, session restore, recent files, search+, line numbers, unsaved indicator
+  - Phase 2: Zoom in/out, custom shortcuts, encoding selector, line ending selector, enhanced status bar
+  - Phase 3: Syntax highlighting (12 languages), JSON formatter, split view
+  - Phase 4: Backup/version history, plugin system, settings export/import
+  - 6 preset themes (Classic Light/Dark, Monokai, Solarized Light/Dark, Dracula)
+  - New modules: backup.c, plugin.c, settings.c, theme.c
+
+- **v1.3.0** - Theme support
+  - 6 preset themes with custom font settings
+  - Theme persistence to theme.json
+
 - **v1.2.0** - Bug fixes from this session
   - BUG-001 through BUG-009 fixed
   - Better file loading via proper gap buffer API

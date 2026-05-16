@@ -14,18 +14,6 @@ The goal is not to compete with VS Code, Notepad++, or modern IDEs. The goal is 
 
 FastPad should feel better than a bloated editor because it does less, not because it does more.
 
-## Version History
-
-| Version | Release Date | Features |
-|---------|--------------|----------|
-| v1.0.x | - | Initial release: basic text editing, file open/save, undo/redo |
-| v1.1.x | - | Multi-tab support, tab bar, shared editor surface |
-| v1.2.x | - | Bug fixes: buffer corruption, selection rendering, caret positioning |
-| v1.3.0 | - | Theme support: 6 preset themes, custom font settings |
-| v2.0.0 | - | Full feature release: auto-save, recent files, search+, line numbers, zoom, encoding, syntax highlighting, split view, backup, plugin system |
-
----
-
 ## Product Goals
 
 1. **Native and small**
@@ -55,7 +43,17 @@ FastPad should feel better than a bloated editor because it does less, not becau
    - Prefer fewer features with better quality
    - Avoid complexity that does not clearly improve responsiveness or usability
 
----
+## Non-Goals
+
+FastPad is **not** trying to include:
+
+- extension marketplace
+- rich text editing
+- web rendering
+
+These may be considered later, but are explicitly out of scope for v1.
+
+**Note:** Tab support was added in v1.1 for basic multi-file editing, but advanced tab features remain out of scope.
 
 ## Target Platform
 
@@ -68,8 +66,6 @@ Build environment may be:
 - Windows native build using MSVC or clang
 - Linux cross-compile using `mingw-w64`
 
----
-
 ## Language and Tooling
 
 - Language: **C**
@@ -78,13 +74,9 @@ Build environment may be:
 - Build: simple Makefile or shell script
 - No new package dependencies
 
----
+## Core Features (v1.0+)
 
-## Core Features
-
-### v1.0 - Basic Editing
-
-FastPad v1.0 must support:
+FastPad v1 must support:
 
 1. **Create and edit plain text**
 2. **Open existing text files**
@@ -98,11 +90,18 @@ FastPad v1.0 must support:
 10. **Copy/Cut/Paste**
 11. **Undo/Redo** (bounded history)
 12. **Vertical scrolling**
-13. **Find dialog**
-14. **Status bar** (line, column, modified state)
-15. **UTF-8 file I/O**
+13. **Horizontal scrolling** (when word wrap disabled)
+14. **Find dialog** (modeless, with find next/previous)
+15. **Status bar** showing:
+    - current line and column
+    - modified state
+    - file encoding
+    - line ending style
+16. **UTF-8 file I/O** with encoding detection
 
-### v1.1 - Multi-Tab Editing
+## Multi-Tab Editing (v1.1+)
+
+FastPad v1.1 added basic multi-tab support:
 
 - **New tab**: Ctrl+T or File > New Tab
 - **Close tab**: Ctrl+W or File > Close Tab
@@ -112,501 +111,334 @@ FastPad v1.0 must support:
 - **Shared editor surface**: All tabs share the main window's editor surface for simplicity
 - **Proper shutdown**: Clean exit without hanging, even with unsaved changes
 
-### v1.3 - Theme Support
+## Extended Features (v1.2+)
 
-**Preset Themes (6):**
-1. Classic Light - Traditional light background
-2. Classic Dark - Traditional dark background
-3. Monokai - Popular syntax theme
-4. Solarized Light - Low-contrast light theme
-5. Solarized Dark - Low-contrast dark theme
-6. Dracula - Purple accent dark theme
-
-**Font Settings:**
-- Font family (system fonts)
-- Font size (8-72)
-- Font weight (regular, bold)
-
-**Theme Persistence:**
-- Settings stored in `%APPDATA%\FastPad\theme.json`
-
----
-
-## v2.0 - Feature Pack
-
-### Auto Save & Session Restore
-
-**Auto Save:**
-- Triggers every 3 seconds when buffer is dirty
-- Saves to `%APPDATA%\FastPad\autosave\`
-- Does not change the file's original path
-- Status indicator in status bar: "Saved", "Unsaved", "Auto-saved"
-
-**Session Restore:**
-- On startup, restores tabs from last session
-- Stores session data in `%APPDATA%\FastPad\session.json`
-- Includes: open files, cursor positions, scroll positions, active tab
-
-**Data Directory:**
-- `%APPDATA%\FastPad\` - main config directory
-  - `autosave\` - auto-saved temporary files
-  - `session.json` - last session state
-  - `theme.json` - theme settings
-  - `shortcuts.json` - custom keyboard shortcuts
-  - `recent_files.json` - recent files list
-
-### Recent Files
-
-**Features:**
-- Menu: File > Recent Files
-- Maximum 20 entries
-- Pin/unpin favorite files
-- Clear recent files option
-- Reopen last session option
-- Shows full path on hover
-
-### Search and Replace (Enhanced)
-
-**Find Dialog:**
-- Find text input
-- Match case toggle
-- Whole word toggle
-- Direction (up/down)
-- Highlight all matches
-- Count total matches
-- Navigate: Find Next, Find Previous
-
-**Replace Dialog:**
-- Find and Replace text inputs
-- Replace single occurrence
-- Replace all occurrences
-- Confirmation before Replace All
-
-### Line Numbers
-
-**Features:**
-- Toggle via View > Line Numbers
-- Displayed in gutter on left side
-- Current line number highlighted
-- Aligned with text content
-- Updates on scroll and edit
-
-### Unsaved Tab Indicator
-
-**Features:**
-- Tab title shows `*` prefix when buffer is dirty
-- Tab title shows file name (or "Untitled" if new)
-- Status bar shows "Unsaved" or "Saved" indicator
-
-### Zoom In/Out
-
-**Controls:**
-- `Ctrl+Plus` - Zoom In (increase font size by 2pt)
-- `Ctrl+Minus` - Zoom Out (decrease font size by 2pt)
-- `Ctrl+0` - Reset Zoom (restore to 100%)
-- Menu: View > Zoom submenu
-
-**Zoom Range:**
-- Minimum: 50% (zoom_level = 50)
-- Maximum: 200% (zoom_level = 200)
-- Default: 100% (zoom_level = 100)
-
-**Behavior:**
-- Zoom is temporary (session only)
-- Affects only the editor font size
-- Status bar shows current zoom level
-
-### Custom Shortcuts
-
-**Features:**
-- Load/save shortcuts from `%APPDATA%\FastPad\shortcuts.json`
-- Default shortcuts initialized on first run
-- Menu: Settings > Shortcuts
-
-**Default Shortcuts:**
-| Shortcut | Action |
-|----------|--------|
-| Ctrl+N | New |
-| Ctrl+O | Open |
-| Ctrl+S | Save |
-| Ctrl+Shift+S | Save As |
-| Ctrl+T | New Tab |
-| Ctrl+W | Close Tab |
-| Ctrl+Tab | Next Tab |
-| Ctrl+Shift+Tab | Previous Tab |
-| Ctrl+F | Find |
-| Ctrl+H | Replace |
-| Ctrl+A | Select All |
-| Ctrl+Z | Undo |
-| Ctrl+Y | Redo |
-| Ctrl+Home | Go to Start |
-| Ctrl+End | Go to End |
-| Ctrl+= | Zoom In |
-| Ctrl+- | Zoom Out |
-| Ctrl+0 | Reset Zoom |
-
-### Encoding Selector
-
-**Supported Encodings:**
-- UTF-8 (default)
-- UTF-8 with BOM
-- ANSI (system default code page)
-- UTF-16 LE (Little Endian)
-- UTF-16 BE (Big Endian)
-
-**Menu:** File > Encoding
-
-**Behavior:**
-- Encoding is per-tab
-- Changing encoding does not convert the file
-- Status bar shows current encoding
-
-### Line Ending Selector
-
-**Supported Line Endings:**
-- CRLF (Windows default: `\r\n`)
-- LF (Unix default: `\n`)
-- CR (Old Mac: `\r`)
-
-**Menu:** File > Line Ending
-
-**Behavior:**
-- Line ending is per-tab
-- Status bar shows current line ending type
-
-### Enhanced Status Bar
-
-**Information Displayed:**
-```
-Tab X/Y | Ln X, Col Y | Words: N | Chars: N | UTF-8 | CRLF | Saved
-```
-
-- **Tab X/Y**: Current tab number and total tabs
-- **Ln X, Col Y**: Current line and column
-- **Words: N**: Word count in current buffer
-- **Chars: N**: Character count in current buffer
-- **UTF-8/UTF-16/ANSI**: Current encoding
-- **CRLF/LF/CR**: Current line ending
-- **Saved/Unsaved/Auto-saved**: Save status
-
-### Syntax Highlighting
-
-**Supported Languages (12):**
-1. JSON
-2. XML
-3. HTML
-4. CSS
-5. JavaScript
-6. Python
-7. Markdown
-8. INI/Config
-9. YAML
-10. SQL
-11. C
-12. C++
-
-**Token Types:**
-- Keywords (language-specific reserved words)
-- Strings (single/double quoted)
-- Comments (single-line `//` and multi-line `/* */`)
-- Numbers
-- Operators
-- Properties/Variables
-
-**Features:**
-- Language auto-detection from file extension
-- Manual language selection via Tools > Language
-- Highlight colors from current theme
-
-### JSON Formatter
-
-**Menu:** Tools > Format JSON
-
-**Operations:**
-- **Format**: Pretty-print JSON with proper indentation
-- **Minify**: Remove all whitespace from JSON
-- **Validate**: Check if content is valid JSON
-
-**Features:**
-- 2-space indentation for formatting
-- Error messages for invalid JSON
-- Operates on entire buffer content
+The following features were added in v1.2 and later:
 
 ### Split View
+- **Split horizontal**: Ctrl+Shift+H or View > Split Horizontal
+- **Split vertical**: Ctrl+Shift+V or View > Split Vertical
+- **Close split**: Ctrl+Shift+W or View > Close Split
+- **Cycle focus**: F6 cycles between split panes
 
-**Menu:** View > Split
+### Syntax Highlighting
+FastPad supports syntax highlighting for common file types:
 
-**Options:**
-- Split Horizontal (side by side)
-- Split Vertical (top and bottom)
-- Close Split
+| Language   | Extensions        |
+|------------|-------------------|
+| C          | .c, .h            |
+| C++        | .cpp, .cc, .cxx   |
+| Java       | .java             |
+| JavaScript | .js               |
+| Python     | .py               |
+| HTML       | .html, .htm       |
+| CSS        | .css              |
+| XML        | .xml              |
+| JSON       | .json             |
+| YAML       | .yml, .yaml       |
+| SQL        | .sql              |
+| Markdown   | .md               |
+| INI        | .ini, .cfg        |
 
-**Behavior:**
-- Both viewports share the same buffer
-- Each viewport has independent scroll position
-- Caret is shared (active in one viewport at a time)
-- Synchronized updates when content changes
+Colors follow a theme (see Theme System below).
 
-### Backup/Version History
+### Theme System
+FastPad supports color themes for the editor interface.
 
-**Backup System:**
-- Menu: Tools > Backup
-- Creates timestamped backup copies
+**Built-in themes:**
+- **Dark**: Dark background with light text
+- **Light**: Light background with dark text (default)
+- **High Contrast**: Maximum contrast for accessibility
+
+**Theme configuration:**
+- Editor background and text colors
+- Selection background and text colors
+- Caret color
+- Line number margin colors
+- Tab colors (active/inactive)
+- Status bar colors
+- Menu colors
+
+### Session Management
+- **Auto-save**: Automatic backup of unsaved changes to temp files
+- **Session restore**: On startup, reopens previously open files
+- **Session data stored**: Per-tab cursor position, scroll position, filename
+
+### Recent Files
+- Tracks recently opened files (up to 20)
+- Accessible via File > Recent submenu
+- Persisted across sessions
+
+### Zoom
+- **Zoom in**: Ctrl+Plus or Ctrl+Mouse wheel up
+- **Zoom out**: Ctrl+Minus or Ctrl+Mouse wheel down
+- **Reset zoom**: Ctrl+0
+- Range: 50% to 200%
+
+### Custom Shortcuts
+Users can configure keyboard shortcuts for menu actions:
+- Stored in settings file as JSON
+- Import/export via Settings menu
+
+### Backup System
+- **Auto-backup**: Creates timestamped backup copies of files before saving
+- **Version history**: Keeps up to 10 backup versions per file
+- **Restore**: Choose which version to restore from
 - Backup directory: `%APPDATA%\FastPad\backups\`
-- Maximum 10 backup versions per file
-- Backup file naming: `filename.timestamp.bak`
 
-**Features:**
-- Create Backup: Manually create a backup of current file
-- Restore from Backup: Open backup and replace current content
-- Automatic cleanup of old backups beyond limit
-- Backup includes: file content, original path, timestamp
+### Plugin System
+FastPad has a plugin system for extensibility:
 
-### Plugin/Extension System
+**Plugin structure:**
+- Each plugin in its own directory under `plugins/`
+- `manifest.json` describes the plugin
+- Plugins can register hooks for events
 
-**Plugin Directory:** `%APPDATA%\FastPad\plugins\`
-
-**Plugin Structure:**
-```
-plugins/
-  plugin_name/
-    manifest.json    # Plugin metadata
-    plugin.dll      # Compiled plugin module
-```
-
-**Manifest Schema:**
-```json
-{
-  "id": "plugin_name",
-  "name": "Plugin Display Name",
-  "version": "1.0.0",
-  "description": "What the plugin does",
-  "author": "Author Name",
-  "entrypoint": "plugin_init",
-  "hooks": ["HOOK_FILE_OPEN", "HOOK_FILE_SAVE"]
-}
-```
-
-**Available Hooks:**
-- `HOOK_FILE_OPEN` - Called after file is opened
-- `HOOK_FILE_SAVE` - Called after file is saved
+**Supported hooks:**
+- `HOOK_FILE_OPEN` - Called when a file is opened
+- `HOOK_FILE_SAVE` - Called when a file is saved
+- `HOOK_FILE_CLOSE` - Called when a file is closed
 - `HOOK_EDITOR_INIT` - Called when editor is initialized
-- `HOOK_APP_INIT` - Called when app is initialized
-- `HOOK_APP_SHUTDOWN` - Called when app is shutting down
-- `HOOK_BUFFER_CHANGED` - Called when buffer content changes
-
-**Plugin States:**
-- `PLUGIN_STATE_LOADED` - Successfully loaded
-- `PLUGIN_STATE_ERROR` - Failed to load
-- `PLUGIN_STATE_DISABLED` - Manually disabled
+- `HOOK_EDITOR_KEYDOWN` - Called on keydown in editor
+- `HOOK_EDITOR_CHAR` - Called on char input in editor
+- `HOOK_MENU_BUILD` - Called when menu is being built
+- `HOOK_APP_INIT` - Called when app initializes
+- `HOOK_APP_EXIT` - Called when app exits
 
 ### Settings Export/Import
-
-**Menu:** Settings > Export Settings / Import Settings
-
-**Exported Settings Include:**
-- Theme selection and customizations
-- Font settings (family, size, weight)
-- Custom keyboard shortcuts
+All settings can be exported to JSON and imported:
+- Theme settings
+- Font settings
+- Window position and size
+- Keyboard shortcuts
 - Recent files list
-- Window size and position
-- All preference settings
+- Tab configuration
 
-**Export Format:** JSON file (`%APPDATA%\FastPad\settings_export.json`)
+### JSON Tools
+Under Tools menu:
+- **Format JSON**: Pretty-print JSON content
+- **Minify JSON**: Remove whitespace from JSON
+- **Validate JSON**: Check if content is valid JSON
 
----
+### File Encoding Support
+- UTF-8 (without BOM)
+- UTF-8 with BOM
+- ANSI (system default)
+- UTF-16 LE/BE
+
+### Line Ending Support
+- Windows (CRLF)
+- Unix (LF)
+- Old Mac (CR)
+
+## Nice-to-Have Features
+
+Allowed if they remain simple:
+
+- large file warning
+- read-only detection
+
+Do not add these until core editing is solid.
+
+## Memory and Performance Targets
+
+These are targets, not absolute promises.
+
+### Startup
+- The app should open in well under one second on a normal machine
+
+### Typing
+- No visible lag during normal typing in medium-size text files
+
+### File size
+- Prefer executable size under a few hundred KB stripped
+- Under 1 MB is desirable for the binary if practical
+
+### Memory
+- Keep memory low and proportional to file size
+- Avoid large caches and heavyweight structures
+- Avoid background threads unless clearly necessary
+
+### Redraw efficiency
+- Redraw only what changed when practical
+- Render only visible lines
 
 ## Architecture
 
-### High-Level Modules
+## High-Level Modules
 
-| Module | Responsibility |
-|--------|----------------|
-| `main.c` | Application entry point, WinMain, message loop, top-level initialization |
-| `app.c` | Global app state, menu commands, window lifecycle, file/open/save workflow |
-| `editor.c` | Caret logic, selection logic, keyboard and mouse editing behavior, viewport state |
-| `buffer.c` | Text storage via gap buffer, insertion/deletion, line indexing helpers |
-| `render.c` | Font setup, text measuring, line rendering, selection painting, caret rendering |
-| `fileio.c` | Open/save/load, encoding conversion, line ending normalization |
-| `search.c` | Find text, next/previous match, modeless find dialog |
-| `tab_manager.c` | Tab creation, deletion, switching, SysTabControl32 management |
-| `theme.c` | Theme definitions, color management, font settings |
-| `log.c` | Logging functionality |
-| `backup.c` | Backup creation, listing, restore, cleanup |
-| `plugin.c` | Plugin discovery, loading, hook management |
-| `settings.c` | Settings export/import, JSON serialization |
+### `main.c`
+- application entry point
+- WinMain
+- message loop
+- top-level initialization
 
-### Header Files
+### `app.c`
+- global app state
+- menu commands
+- window lifecycle
+- file/open/save workflow
 
-| Header | Purpose |
-|--------|---------|
-| `types.h` | Core type definitions (App, Editor, Tab, GapBuffer, etc.) |
-| `app.h` | App state management, window procedures |
-| `editor.h` | Editor operations, caret, selection |
-| `buffer.h` | Gap buffer implementation |
-| `render.h` | Rendering constants, colors |
-| `fileio.h` | File I/O operations, encoding types |
-| `search.h` | Search dialog, match finding |
-| `tab_manager.h` | Tab management API |
-| `theme.h` | Theme structs, color definitions |
-| `log.h` | Logging macros and functions |
-| `backup.h` | Backup system API |
-| `plugin.h` | Plugin system API, hook definitions |
-| `settings.h` | Settings API |
+### `editor.c`
+- caret logic
+- selection logic
+- keyboard and mouse editing behavior
+- viewport state
 
-### Data Storage
+### `buffer.c`
+- text storage (gap buffer implementation)
+- insertion/deletion
+- line indexing helpers
+- file-size-sensitive operations
 
-| File | Location | Purpose |
-|------|----------|---------|
-| `theme.json` | `%APPDATA%\FastPad\` | Theme and font settings |
-| `shortcuts.json` | `%APPDATA%\FastPad\` | Custom keyboard shortcuts |
-| `recent_files.json` | `%APPDATA%\FastPad\` | Recent files list |
-| `session.json` | `%APPDATA%\FastPad\` | Last session state |
-| `settings_export.json` | User-chosen | Exported settings |
-| `autosave\` | `%APPDATA%\FastPad\` | Auto-saved temporary files |
-| `backups\` | `%APPDATA%\FastPad\` | Version history backups |
-| `plugins\` | `%APPDATA%\FastPad\` | Installed plugins |
+### `render.c`
+- font setup
+- measuring text
+- line rendering
+- selection painting
+- caret rendering coordination
 
----
+### `fileio.c`
+- open/save/load
+- UTF-8 decoding/encoding
+- line ending normalization
+
+### `search.c`
+- find text
+- next/previous match
+- modeless find dialog with proper focus handling
+- JSON formatting/minifying/validation
+
+### `tab_manager.c`
+- tab creation, deletion, and switching
+- tab control (SysTabControl32) management
+- unsaved changes detection across all tabs
+- shutdown-aware tab closing to prevent hangs
+
+### `theme.c`
+- theme definitions and color management
+- built-in theme implementations
+
+### `backup.c`
+- automatic backup creation
+- version history management
+- backup restore functionality
+
+### `plugin.c`
+- plugin loading and initialization
+- plugin hook management
+- manifest parsing
+
+### `settings.c`
+- settings export to JSON
+- settings import from JSON
+- individual settings accessors
+
+## Text Storage
+
+**Gap buffer** implementation for efficient text editing.
+
+Requirements for the text buffer:
+
+- efficient insertion/deletion near caret
+- support for large enough files for normal note-taking and coding
+- line-based navigation helpers
+- no quadratic behavior during normal use
 
 ## UI Layout
 
 Main window contains:
 
-- Menu bar
-- Tab bar (shows all open tabs)
-- Editor client area (shared by all tabs)
-- Status bar (toggleable via View > Status Bar)
+- menu bar
+- tab bar (shows all open tabs)
+- editor client area (shared by all tabs)
+- optional status bar
 
 No ribbon, no custom chrome, no unnecessary panels.
 
 ### Tab Bar Behavior
 
 - Tab bar is positioned at the top of the client area
-- All tabs share the same editor surface (child window per tab is deferred)
+- All tabs share the same editor surface (child window per tab is deferred to future versions)
 - Tab switching updates focus, caret, and redraw the editor area
-- Tab bar shows tab titles with `*` prefix for unsaved changes
-- Unsaved indicator and file path shown
-
----
+- Tab bar shows tab titles and allows clicking to switch tabs
 
 ## Menus
 
 ### File
-- New (Ctrl+N)
-- New Tab (Ctrl+T)
-- Close Tab (Ctrl+W)
-- Open (Ctrl+O)
-- Save (Ctrl+S)
-- Save As (Ctrl+Shift+S)
-- **Encoding** (submenu)
-  - UTF-8
-  - UTF-8 with BOM
-  - ANSI
-  - UTF-16 LE
-  - UTF-16 BE
-- **Line Ending** (submenu)
-  - CRLF
-  - LF
-  - CR
-- **Recent Files** (submenu)
-  - File entries (clickable)
-  - Pin/Unpin option
-  - Clear Recent Files
-  - Separator
-  - Reopen Last Session
+- New
+- New Tab
+- Close Tab
+- Open
+- Save
+- Save As
+- Recent Files (submenu)
+- Encoding (submenu: UTF-8, UTF-8 BOM, ANSI, UTF-16)
+- Line Ending (submenu: Windows CRLF, Unix LF, Old Mac CR)
 - Exit
 
 ### Edit
-- Undo (Ctrl+Z)
-- Redo (Ctrl+Y)
-- Cut (Ctrl+X)
-- Copy (Ctrl+C)
-- Paste (Ctrl+V)
-- Select All (Ctrl+A)
-- Find (Ctrl+F)
-- **Find/Replace** (submenu)
-  - Find (Ctrl+F)
-  - Replace (Ctrl+H)
-- Go to Line (Ctrl+G)
+- Undo
+- Redo
+- Cut
+- Copy
+- Paste
+- Select All
+- Find
+- Find Next
+- Replace
 
 ### View
-- **Zoom** (submenu)
-  - Zoom In (Ctrl+Plus)
-  - Zoom Out (Ctrl+Minus)
-  - Reset Zoom (Ctrl+0)
-  - Separator
-  - 50%
-  - 75%
-  - 100%
-  - 125%
-  - 150%
-  - 200%
-- **Split** (submenu)
-  - Split Horizontal
-  - Split Vertical
-  - Close Split
 - Word Wrap
-- **Line Numbers**
 - Status Bar
+- Line Numbers
+- Zoom In
+- Zoom Out
+- Zoom Reset
+- Split Horizontal
+- Split Vertical
+- Close Split
+- Syntax Highlighting
 
 ### Tools
-- **Backup** (submenu)
-  - Create Backup
-  - Restore from Backup...
-- **Plugins** (submenu)
-  - Manage Plugins...
-  - Reload Plugins
-- **Format** (submenu)
-  - Format JSON
-  - Minify JSON
-  - Validate JSON
-- **Language** (submenu) - List of supported languages
+- Format JSON
+- Minify JSON
+- Validate JSON
+- Create Backup
+- Restore Backup
+- Plugins
 
 ### Settings
-- **Shortcuts**
-  - Customize Shortcuts...
-  - Reset to Defaults
-- **Export Settings...**
-- **Import Settings...**
-- **Theme** (submenu) - List of preset themes
+- Customize Shortcuts
+- Export Settings
+- Import Settings
 
 ### Help
 - About
 
----
-
 ## Input and Editing Behavior
 
-### Keyboard Shortcuts (v2.0 Complete List)
-
-| Shortcut | Action |
-|----------|--------|
-| Ctrl+N | New |
-| Ctrl+O | Open |
-| Ctrl+S | Save |
-| Ctrl+Shift+S | Save As |
-| Ctrl+T | New Tab |
-| Ctrl+W | Close Tab |
-| Ctrl+Tab | Next Tab |
-| Ctrl+Shift+Tab | Previous Tab |
-| Ctrl+F | Find |
-| Ctrl+H | Replace |
-| Ctrl+A | Select All |
-| Ctrl+Z | Undo |
-| Ctrl+Y | Redo |
-| Ctrl+X | Cut |
-| Ctrl+C | Copy |
-| Ctrl+V | Paste |
-| Ctrl+G | Go to Line |
-| Ctrl+= | Zoom In |
-| Ctrl+- | Zoom Out |
-| Ctrl+0 | Reset Zoom |
-| Ctrl+Home | Go to file start |
-| Ctrl+End | Go to file end |
-| Arrows | Move caret |
-| Home/End | Move within line |
-| PageUp/PageDown | Scroll page |
+### Keyboard shortcuts
+- Ctrl+N = New
+- Ctrl+O = Open
+- Ctrl+S = Save
+- Ctrl+Shift+S = Save As
+- Ctrl+T = New Tab
+- Ctrl+W = Close Tab
+- Ctrl+Tab = Next Tab
+- Ctrl+Shift+Tab = Previous Tab
+- Ctrl+F = Find
+- Ctrl+H = Replace
+- Ctrl+A = Select All
+- Ctrl+Z = Undo
+- Ctrl+Y = Redo
+- Ctrl+X = Cut
+- Ctrl+C = Copy
+- Ctrl+V = Paste
+- Ctrl+Plus = Zoom In
+- Ctrl+Minus = Zoom Out
+- Ctrl+0 = Reset Zoom
+- F6 = Cycle split focus
 
 ### Navigation
 - arrows move caret
@@ -616,50 +448,40 @@ No ribbon, no custom chrome, no unnecessary panels.
 - mouse click places caret
 - drag selects text
 
-### Line Endings
-- Internally normalize all line endings to `\n`
-- Write back with selected line ending type (CRLF/LF/CR)
-- Behavior is configurable per-tab
-
----
+### Line endings
+- normalize internally
+- preserve or consistently write `\n`/CRLF based on policy chosen for v1
+- behavior must be documented in code comments
 
 ## File Handling
 
-**Supported:**
-- Plain text files
-- UTF-8 files (with and without BOM)
-- UTF-16 LE/BE files
-- ANSI files (system code page)
-- Empty files
-- Reasonably large text files
+Supported:
+- plain text files
+- UTF-8 files
+- empty files
+- reasonably large text files
 
-**Not supported:**
-- Binary file editing
-- Rich text formats
+Not required:
+- binary file editing
+- rich text formats
 - Word docs
 - PDFs
 
-**Behavior:**
-- Warn on unsaved changes before destructive actions
-- Update window title with filename and modified marker
-- Auto-detect encoding on file open
-
----
+Behavior:
+- warn on unsaved changes before destructive actions
+- update window title with filename and modified marker
 
 ## Error Handling
 
 The app must fail simply and clearly.
 
 Examples:
-- Open failure -> message box
-- Save failure -> message box
-- Invalid decode -> either best-effort fallback or clear error
-- Out-of-memory -> fail gracefully if practical
-- Invalid JSON (formatter) -> show error message
+- open failure -> message box
+- save failure -> message box
+- invalid decode -> either best-effort fallback or clear error
+- out-of-memory -> fail gracefully if practical
 
 No silent data loss.
-
----
 
 ## Rendering Rules
 
@@ -673,48 +495,19 @@ No silent data loss.
 
 Selection must be drawn properly to avoid visual artifacts:
 
-- Lines are drawn in 3 segments when partially selected: before selection (normal color), selected portion (white on blue), after selection (normal color)
-- Do NOT draw entire line in selection color just because part of it is selected
-- Selection background is drawn first, then text on top
-- This prevents ghost characters and ensures text remains readable during selection
-
----
+- lines are drawn in 3 segments when partially selected: before selection (normal color), selected portion (white on blue), after selection (normal color)
+- do NOT draw entire line in white color just because part of it is selected
+- selection background is drawn first, then text on top
+- this prevents ghost characters and ensures text remains readable during selection
 
 ## Code Quality Rules
 
-- Small files with clear responsibilities
-- Avoid macros unless useful
-- Avoid giant global mutable state blocks where possible
-- Comment the tricky parts, especially buffer logic
-- Prefer simple structs and functions over abstraction-heavy patterns
-- No premature generalization
-
----
-
-## Build and Distribution
-
-### Linux -> Windows Cross-Compile
-
-```sh
-x86_64-w64-mingw32-gcc \
-  -Os -s \
-  -ffunction-sections -fdata-sections \
-  -Wl,--gc-sections \
-  -mwindows \
-  src/main.c src/app.c src/editor.c src/buffer.c src/fileio.c \
-  src/render.c src/search.c src/tab_manager.c src/log.c \
-  src/theme.c src/backup.c src/plugin.c src/settings.c \
-  -o FastPad.exe \
-  -luser32 -lgdi32 -lcomdlg32 -lkernel32 -lshell32 -lcomctl32
-```
-
-### Release Artifact
-
-- A single `FastPad.exe`
-- No runtime installer required
-- Target size: ~50KB (with all v2.0 features)
-
----
+- small files with clear responsibilities
+- avoid macros unless useful
+- avoid giant global mutable state blocks where possible
+- comment the tricky parts, especially buffer logic
+- prefer simple structs and functions over abstraction-heavy patterns
+- no premature generalization
 
 ## Bug Tracking
 
@@ -726,29 +519,101 @@ When fixing bugs:
 3. Verify fix compiles and passes tests
 4. Update version history in BUG_FIXES.md
 
----
+## Build and Distribution
 
-## Testing
+The repo should support:
 
-After any changes, always run:
+### Native Windows build
+- MSVC or clang
 
-```bash
-make clean && make   # Must compile with zero warnings
+### Linux -> Windows cross-build
+- `mingw-w64`
+
+The release artifact should be:
+
+- a single `FastPad.exe`
+- no runtime installer required if possible
+
+## Suggested Build Command
+
+Example Linux cross-compile command:
+
+```sh
+x86_64-w64-mingw32-gcc \
+  -Os -s \
+  -ffunction-sections -fdata-sections \
+  -Wl,--gc-sections \
+  -mwindows \
+  src/main.c src/app.c src/editor.c src/buffer.c src/fileio.c src/render.c src/search.c \
+  -o FastPad.exe \
+  -luser32 -lgdi32 -lcomdlg32 -lkernel32 -lshell32
 ```
 
----
+## File Structure
 
-## Non-Goals (What FastPad is NOT)
+```
+fastpad/
+├── src/
+│   ├── main.c          # Entry point
+│   ├── app.c           # Application state and window management
+│   ├── app.h
+│   ├── editor.c        # Editor operations (caret, selection, input)
+│   ├── editor.h
+│   ├── buffer.c        # Gap buffer implementation
+│   ├── buffer.h
+│   ├── render.c        # GDI rendering
+│   ├── render.h
+│   ├── fileio.c        # File I/O with encoding support
+│   ├── fileio.h
+│   ├── search.c        # Find/replace dialogs and JSON tools
+│   ├── search.h
+│   ├── tab_manager.c   # Multi-tab management
+│   ├── tab_manager.h
+│   ├── theme.c         # Theme definitions
+│   ├── theme.h
+│   ├── backup.c        # Backup system
+│   ├── backup.h
+│   ├── plugin.c        # Plugin system
+│   ├── plugin.h
+│   ├── settings.c      # Settings export/import
+│   ├── settings.h
+│   ├── types.h         # Main type definitions
+│   ├── core_types.h   # Core types (GapBuffer, Selection, etc.)
+│   ├── log.c          # Logging (dev builds only)
+│   ├── log.h
+│   ├── errors.h       # Error messages
+│   └── Makefile       # Build system
+├── spec/
+│   ├── 001-spec.md     # This file
+│   └── BUG_FIXES.md    # Bug tracking
+├── plugins/            # Plugin directories
+├── FastPad.exe         # Build output
+└── README.md
+```
 
-FastPad does NOT include:
+## Version History
 
-- File tree/sidebar
-- Minimap
-- Telemetry
-- Collaboration
-- Markdown preview
-- Rich text editing
-- Web rendering
-- Extension marketplace
+- **v1.2.x** - Extended feature set
+  - Split view support
+  - Syntax highlighting for 14 languages
+  - Theme system with dark/light modes
+  - Plugin system with 9 hook types
+  - Backup system with version history
+  - Settings export/import (JSON)
+  - Session management and auto-save
+  - Recent files tracking
+  - Zoom (50-200%)
+  - Custom keyboard shortcuts
+  - JSON formatting/minifying/validation
+  - File encoding detection
+  - Multiple line ending styles
+  - Bug fixes from BUG_FIXES.md
 
-These remain out of scope for v2.0.
+- **v1.1.x** - Tab management added
+  - Multi-tab support introduced
+  - Various stability issues from sharing editor surface
+
+- **v1.0.x** - Initial release
+  - Basic text editing
+  - File open/save
+  - Undo/redo
