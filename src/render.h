@@ -4,6 +4,7 @@
 #include "types.h"
 
 #define RENDER_MARGIN_WIDTH 50
+#define RENDER_LINE_NUMBER_GUTTER_WIDTH 50
 
 // Initialize rendering resources
 bool render_init(Editor *editor);
@@ -28,5 +29,13 @@ void render_resize(Editor *editor, int width, int height);
 
 // Get caret display column (tabs expanded to spaces)
 int get_caret_display_col(Editor *editor);
+
+// Toggle line numbers
+void render_set_show_line_numbers(Editor *editor, bool show);
+bool render_get_show_line_numbers(Editor *editor);
+
+// Set search highlight ranges
+void render_set_search_highlights(Editor *editor, TextPos *positions, int count);
+void render_clear_search_highlights(Editor *editor);
 
 #endif // RENDER_H

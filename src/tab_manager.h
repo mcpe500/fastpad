@@ -51,6 +51,9 @@ void tab_manager_set_tab_filename(TabManager *mgr, int index, const char *filena
 // Update window title based on active tab
 void tab_manager_update_window_title(TabManager *mgr, HWND hwnd);
 
+// Update tab title to include unsaved indicator
+void tab_update_title(Tab *tab);
+
 // Update status bar based on active tab
 void tab_manager_update_statusbar(TabManager *mgr);
 

@@ -81,6 +81,10 @@ int tab_manager_new_tab(TabManager *mgr) {
     snprintf(tab->filename, sizeof(tab->filename), "Untitled");
     tab->editor.tab_index = index;
     
+    // Initialize encoding and line ending defaults (per-tab)
+    tab->editor.encoding = ENCODING_UTF8;
+    tab->editor.line_ending = LINE_ENDING_CRLF;
+    
     // Don't create child window - use parent window directly
     // This ensures keyboard input goes to main window
     tab->hwnd = mgr->parent_hwnd;
@@ -243,6 +247,10 @@ Tab* tab_manager_get_tab(TabManager *mgr, int index) {
 void tab_manager_update_control(TabManager *mgr) {
     for (int i = 0; i < mgr->count; i++) {
         TCITEMA tie = {0};
+        
+        // Update title with unsaved indicator
+        tab_update_title(&mgr->tabs[i]);
+        
         tie.mask = TCIF_TEXT;
         tie.pszText = mgr->tabs[i].title;
         TabCtrl_SetItem(mgr->hwnd, i, &tie);
@@ -407,6 +415,25 @@ void tab_manager_update_window_title(TabManager *mgr, HWND hwnd) {
     g_updating_title = false;
 }
 
+void tab_update_title(Tab *tab) {
+    if (!tab) return;
+    
+    // Extract basename for title
+    const char *basename = strrchr(tab->filename, '\\');
+    if (basename) {
+        basename++;
+    } else {
+        basename = tab->filename;
+    }
+    
+    // Build title with unsaved indicator
+    if (tab->editor.modified) {
+        snprintf(tab->title, MAX_TAB_TITLE, "*%s", basename);
+    } else {
+        snprintf(tab->title, MAX_TAB_TITLE, "%s", basename);
+    }
+}
+
 void tab_manager_update_statusbar(TabManager *mgr) {
     if (!g_app.statusbar || !g_app.show_statusbar) {
         return;
@@ -418,20 +445,47 @@ void tab_manager_update_statusbar(TabManager *mgr) {
     int line, col;
     editor_get_linecol(&active->editor, &line, &col);
     
-    char text[100];
-    snprintf(text, sizeof(text), "Tab %d/%d  |  Ln %d, Col %d  %s",
+    // Get word and char counts
+    int words = editor_get_word_count(&active->editor);
+    int chars = editor_get_char_count(&active->editor);
+    
+    // Get encoding string
+    const char *enc_str;
+    switch (active->editor.encoding) {
+        case ENCODING_UTF8: enc_str = "UTF-8"; break;
+        case ENCODING_UTF8_BOM: enc_str = "UTF-8 BOM"; break;
+        case ENCODING_ANSI: enc_str = "ANSI"; break;
+        case ENCODING_UTF16LE: enc_str = "UTF-16 LE"; break;
+        case ENCODING_UTF16BE: enc_str = "UTF-16 BE"; break;
+        default: enc_str = "UTF-8"; break;
+    }
+    
+    // Get line ending string
+    const char *le_str;
+    switch (active->editor.line_ending) {
+        case LINE_ENDING_CRLF: le_str = "CRLF"; break;
+        case LINE_ENDING_LF: le_str = "LF"; break;
+        case LINE_ENDING_CR: le_str = "CR"; break;
+        default: le_str = "CRLF"; break;
+    }
+    
+    char text[256];
+    snprintf(text, sizeof(text), "Tab %d/%d | Ln %d, Col %d | Words: %d | Chars: %d | %s | %s | %s",
              mgr->active_index + 1, mgr->count,
              line, col,
-             active->editor.modified ? "| Modified" : "");
+             words, chars,
+             enc_str, le_str,
+             active->editor.modified ? "Modified" : "Saved");
     
-    int parts[3];
+    int parts[4];
     RECT rect;
     GetClientRect(mgr->parent_hwnd, &rect);
     
-    parts[0] = rect.right / 2;
-    parts[1] = (rect.right * 3) / 4;
-    parts[2] = -1;
+    parts[0] = rect.right / 4;
+    parts[1] = rect.right / 2;
+    parts[2] = (rect.right * 3) / 4;
+    parts[3] = -1;
     
-    SendMessage(g_app.statusbar, SB_SETPARTS, 3, (LPARAM)parts);
+    SendMessage(g_app.statusbar, SB_SETPARTS, 4, (LPARAM)parts);
     SendMessage(g_app.statusbar, SB_SETTEXTA, 0, (LPARAM)text);
 }

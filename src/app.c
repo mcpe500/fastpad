@@ -9,8 +9,13 @@
 #include "log.h"
 #include "theme.h"
 #include <commctrl.h>
+#include <shlobj.h>
 #include <stdio.h>
 #include <string.h>
+
+// Forward declarations
+static void app_update_recent_menu(App *app);
+static void recent_files_save(App *app);
 
 #define IDC_EDIT 1001
 #define IDC_BUTTON_FIND 1002
@@ -25,6 +30,7 @@
 #define ID_FILE_EXIT 4005
 #define ID_FILE_NEW_TAB 4006
 #define ID_FILE_CLOSE_TAB 4007
+#define ID_FILE_RECENT 4008
 #define ID_EDIT_UNDO 4010
 #define ID_EDIT_REDO 4011
 #define ID_EDIT_CUT 4012
@@ -33,9 +39,24 @@
 #define ID_EDIT_SELECTALL 4015
 #define ID_EDIT_FIND 4016
 #define ID_EDIT_FINDNEXT 4017
+#define ID_EDIT_REPLACE 4018
 #define ID_VIEW_WORDWRAP 4020
 #define ID_VIEW_STATUSBAR 4021
+#define ID_VIEW_LINENUMBERS 4022
+#define ID_VIEW_ZOOM_IN 4023
+#define ID_VIEW_ZOOM_OUT 4024
+#define ID_VIEW_ZOOM_RESET 4025
+#define ID_VIEW_SPLIT_HORIZ 4026
+#define ID_VIEW_SPLIT_VERT 4027
+#define ID_VIEW_CLOSE_SPLIT 4028
+#define ID_VIEW_HIGHLIGHT 4029
+#define ID_TOOLS_FORMAT_JSON 4031
+#define ID_TOOLS_MINIFY_JSON 4032
+#define ID_TOOLS_VALIDATE_JSON 4033
 #define ID_HELP_ABOUT 4030
+#define ID_SETTINGS_SHORTCUTS 4040
+#define ID_FILE_ENCODING 4050
+#define ID_FILE_LINEENDING 4060
 
 App g_app;
 
@@ -205,6 +226,33 @@ bool app_init(App *app, HINSTANCE hInstance) {
     app->font_settings.line_height = 100;
     app->font_settings.bold = false;
 
+    // Initialize recent files
+    app->recent_count = 0;
+    app->show_line_numbers = true;
+    app->auto_save_enabled = true;
+    app->highlight_enabled = true;
+    app->split_mode = SPLIT_NONE;
+    app->split_ratio = 0.5f;
+    app->active_split = 0;
+
+    // Initialize zoom level (default 100, range 50-200)
+    app->zoom_level = 100;
+
+    // Initialize custom shortcuts with defaults
+    app->shortcut_count = 0;
+    app_load_shortcuts(app);
+
+    // Initialize auto-save directory path
+    {
+        char appdata[MAX_PATH];
+        if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) == S_OK) {
+            snprintf(app->auto_save_dir, MAX_PATH, "%s\\FastPad\\autosave", appdata);
+            CreateDirectoryA(app->auto_save_dir, NULL);
+        } else {
+            app->auto_save_dir[0] = '\0';
+        }
+    }
+
     // Initialize common controls for status bar and tab control
     INITCOMMONCONTROLSEX icex = {0};
     icex.dwSize = sizeof(icex);
@@ -229,6 +277,7 @@ bool app_init(App *app, HINSTANCE hInstance) {
     }
     
     app->running = true;
+    app->last_edit_time = GetTickCount();
     return true;
 }
 
@@ -266,6 +315,27 @@ HWND app_create_window(App *app, HINSTANCE hInstance) {
     AppendMenuA(file_menu, MF_STRING, ID_FILE_SAVE, "&Save\tCtrl+S");
     AppendMenuA(file_menu, MF_STRING, ID_FILE_SAVEAS, "Save &As...\tCtrl+Shift+S");
     AppendMenuA(file_menu, MF_SEPARATOR, 0, NULL);
+    // Recent files submenu
+    HMENU recent_menu = CreatePopupMenu();
+    AppendMenuA(recent_menu, MF_STRING, 1, "(Empty)");
+    EnableMenuItem(recent_menu, 1, MF_GRAYED);
+    AppendMenuA(file_menu, MF_POPUP, (UINT_PTR)recent_menu, "&Recent Files");
+    AppendMenuA(file_menu, MF_SEPARATOR, 0, NULL);
+    // Encoding submenu
+    HMENU encoding_menu = CreatePopupMenu();
+    AppendMenuA(encoding_menu, MF_STRING, ID_FILE_ENCODING + 0, "UTF-8");
+    AppendMenuA(encoding_menu, MF_STRING, ID_FILE_ENCODING + 1, "UTF-8 BOM");
+    AppendMenuA(encoding_menu, MF_STRING, ID_FILE_ENCODING + 2, "ANSI");
+    AppendMenuA(encoding_menu, MF_STRING, ID_FILE_ENCODING + 3, "UTF-16 LE");
+    AppendMenuA(encoding_menu, MF_STRING, ID_FILE_ENCODING + 4, "UTF-16 BE");
+    AppendMenuA(file_menu, MF_POPUP, (UINT_PTR)encoding_menu, "&Encoding");
+    // Line Ending submenu
+    HMENU lineending_menu = CreatePopupMenu();
+    AppendMenuA(lineending_menu, MF_STRING, ID_FILE_LINEENDING + 0, "CRLF (Windows)");
+    AppendMenuA(lineending_menu, MF_STRING, ID_FILE_LINEENDING + 1, "LF (Unix)");
+    AppendMenuA(lineending_menu, MF_STRING, ID_FILE_LINEENDING + 2, "CR (Old Mac)");
+    AppendMenuA(file_menu, MF_POPUP, (UINT_PTR)lineending_menu, "&Line Ending");
+    AppendMenuA(file_menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(file_menu, MF_STRING, ID_FILE_EXIT, "E&xit");
     AppendMenuA(app->menu, MF_POPUP, (UINT_PTR)file_menu, "&File");
     
@@ -281,15 +351,47 @@ HWND app_create_window(App *app, HINSTANCE hInstance) {
     AppendMenuA(edit_menu, MF_STRING, ID_EDIT_SELECTALL, "Select &All\tCtrl+A");
     AppendMenuA(edit_menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(edit_menu, MF_STRING, ID_EDIT_FIND, "&Find...\tCtrl+F");
+    AppendMenuA(edit_menu, MF_STRING, ID_EDIT_FINDNEXT, "Find &Next\tF3");
+    AppendMenuA(edit_menu, MF_STRING, ID_EDIT_REPLACE, "&Replace...\tCtrl+H");
     AppendMenuA(app->menu, MF_POPUP, (UINT_PTR)edit_menu, "&Edit");
+
+    // Tools menu
+    HMENU tools_menu = CreatePopupMenu();
+    AppendMenuA(tools_menu, MF_STRING, ID_TOOLS_FORMAT_JSON, "Format &JSON\tCtrl+Shift+F");
+    AppendMenuA(tools_menu, MF_STRING, ID_TOOLS_MINIFY_JSON, "&Minify JSON\tCtrl+Shift+M");
+    AppendMenuA(tools_menu, MF_STRING, ID_TOOLS_VALIDATE_JSON, "&Validate JSON");
+    AppendMenuA(app->menu, MF_POPUP, (UINT_PTR)tools_menu, "&Tools");
     
     // View menu
     HMENU view_menu = CreatePopupMenu();
-    AppendMenuA(view_menu, MF_STRING | (app->word_wrap ? MF_CHECKED : MF_UNCHECKED), 
+    AppendMenuA(view_menu, MF_STRING | (app->word_wrap ? MF_CHECKED : MF_UNCHECKED),
                 ID_VIEW_WORDWRAP, "&Word Wrap");
-    AppendMenuA(view_menu, MF_STRING | (app->show_statusbar ? MF_CHECKED : MF_UNCHECKED), 
+    AppendMenuA(view_menu, MF_STRING | (app->show_statusbar ? MF_CHECKED : MF_UNCHECKED),
                 ID_VIEW_STATUSBAR, "&Status Bar");
+    AppendMenuA(view_menu, MF_STRING | (app->show_line_numbers ? MF_CHECKED : MF_UNCHECKED),
+                ID_VIEW_LINENUMBERS, "&Line Numbers");
+    AppendMenuA(view_menu, MF_STRING | (app->highlight_enabled ? MF_CHECKED : MF_UNCHECKED),
+                ID_VIEW_HIGHLIGHT, "Syntax &Highlight");
+    AppendMenuA(view_menu, MF_SEPARATOR, 0, NULL);
+    // Zoom submenu
+    HMENU zoom_menu = CreatePopupMenu();
+    AppendMenuA(zoom_menu, MF_STRING, ID_VIEW_ZOOM_IN, "Zoom &In\tCtrl++");
+    AppendMenuA(zoom_menu, MF_STRING, ID_VIEW_ZOOM_OUT, "Zoom &Out\tCtrl+-");
+    AppendMenuA(zoom_menu, MF_STRING, ID_VIEW_ZOOM_RESET, "&Reset Zoom\tCtrl+0");
+    AppendMenuA(view_menu, MF_POPUP, (UINT_PTR)zoom_menu, "&Zoom");
+    AppendMenuA(view_menu, MF_SEPARATOR, 0, NULL);
+    // Split submenu
+    HMENU split_menu = CreatePopupMenu();
+    AppendMenuA(split_menu, MF_STRING, ID_VIEW_SPLIT_HORIZ, "Split &Horizontal");
+    AppendMenuA(split_menu, MF_STRING, ID_VIEW_SPLIT_VERT, "Split &Vertical");
+    AppendMenuA(split_menu, MF_STRING, ID_VIEW_CLOSE_SPLIT, "&Close Split\tCtrl+W");
+    AppendMenuA(view_menu, MF_POPUP, (UINT_PTR)split_menu, "&Split View");
     AppendMenuA(app->menu, MF_POPUP, (UINT_PTR)view_menu, "&View");
+    
+    // Settings menu
+    HMENU settings_menu = CreatePopupMenu();
+    AppendMenuA(settings_menu, MF_STRING, ID_SETTINGS_SHORTCUTS, "&Keyboard Shortcuts...");
+    AppendMenuA(app->menu, MF_POPUP, (UINT_PTR)settings_menu, "&Settings");
     
     // Help menu
     HMENU help_menu = CreatePopupMenu();
@@ -514,6 +616,22 @@ void app_on_command(App *app, WPARAM wParam) {
             if (tab) search_show_dialog(app->hwnd, &tab->editor);
             break;
         }
+
+        case ID_EDIT_FINDNEXT: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) {
+                // Repeat last search if available
+                extern void search_repeat_last(Editor *editor);
+                search_repeat_last(&tab->editor);
+            }
+            break;
+        }
+
+        case ID_EDIT_REPLACE: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) search_show_replace_dialog(app->hwnd, &tab->editor);
+            break;
+        }
             
         case ID_VIEW_WORDWRAP: {
             app->word_wrap = !app->word_wrap;
@@ -536,6 +654,166 @@ void app_on_command(App *app, WPARAM wParam) {
                          app->show_statusbar ? MF_CHECKED : MF_UNCHECKED);
             ShowWindow(app->statusbar, app->show_statusbar ? SW_SHOW : SW_HIDE);
             break;
+
+        case ID_VIEW_LINENUMBERS:
+            app->show_line_numbers = !app->show_line_numbers;
+            CheckMenuItem(app->menu, ID_VIEW_LINENUMBERS,
+                         app->show_line_numbers ? MF_CHECKED : MF_UNCHECKED);
+            // Update all editors
+            for (int i = 0; i < app->tab_mgr.count; i++) {
+                app->tab_mgr.tabs[i].editor.show_line_numbers = app->show_line_numbers;
+            }
+            InvalidateRect(app->hwnd, NULL, TRUE);
+            break;
+
+        case ID_VIEW_ZOOM_IN:
+            app_handle_zoom(app, 10);
+            break;
+
+        case ID_VIEW_ZOOM_OUT:
+            app_handle_zoom(app, -10);
+            break;
+
+        case ID_VIEW_ZOOM_RESET:
+            app_reset_zoom(app);
+            break;
+
+        case ID_VIEW_HIGHLIGHT:
+            app_toggle_highlight(app);
+            break;
+
+        case ID_VIEW_SPLIT_HORIZ:
+            app_split_toggle(app, SPLIT_HORIZONTAL);
+            break;
+
+        case ID_VIEW_SPLIT_VERT:
+            app_split_toggle(app, SPLIT_VERTICAL);
+            break;
+
+        case ID_VIEW_CLOSE_SPLIT:
+            app_split_close(app);
+            break;
+
+        case ID_TOOLS_FORMAT_JSON: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) {
+                char *result = NULL;
+                char *error = NULL;
+                if (json_format(&tab->editor.buffer, &result, &error)) {
+                    int len = buffer_length(&tab->editor.buffer);
+                    if (len > 0) {
+                        buffer_delete(&tab->editor.buffer, 0, len);
+                    }
+                    buffer_insert(&tab->editor.buffer, 0, result, strlen(result));
+                    free(result);
+                    InvalidateRect(tab->hwnd, NULL, TRUE);
+                } else {
+                    char msg[512];
+                    if (error) {
+                        snprintf(msg, sizeof(msg), "JSON Format Error: %s", error);
+                        free(error);
+                    } else {
+                        snprintf(msg, sizeof(msg), "JSON Format Error: Unknown error");
+                    }
+                    MessageBoxA(app->hwnd, msg, "Format JSON", MB_ICONERROR);
+                }
+            }
+            break;
+        }
+
+        case ID_TOOLS_MINIFY_JSON: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) {
+                char *result = NULL;
+                char *error = NULL;
+                if (json_minify(&tab->editor.buffer, &result, &error)) {
+                    int len = buffer_length(&tab->editor.buffer);
+                    if (len > 0) {
+                        buffer_delete(&tab->editor.buffer, 0, len);
+                    }
+                    buffer_insert(&tab->editor.buffer, 0, result, strlen(result));
+                    free(result);
+                    InvalidateRect(tab->hwnd, NULL, TRUE);
+                } else {
+                    char msg[512];
+                    if (error) {
+                        snprintf(msg, sizeof(msg), "JSON Minify Error: %s", error);
+                        free(error);
+                    } else {
+                        snprintf(msg, sizeof(msg), "JSON Minify Error: Unknown error");
+                    }
+                    MessageBoxA(app->hwnd, msg, "Minify JSON", MB_ICONERROR);
+                }
+            }
+            break;
+        }
+
+        case ID_TOOLS_VALIDATE_JSON: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) {
+                char *error = NULL;
+                int error_line = 0;
+                if (json_validate(&tab->editor.buffer, &error, &error_line)) {
+                    MessageBoxA(app->hwnd, "JSON is valid!", "Validate JSON", MB_ICONINFORMATION);
+                } else {
+                    char msg[512];
+                    if (error) {
+                        snprintf(msg, sizeof(msg), "JSON Validation Error at line %d:\n%s", error_line, error);
+                        free(error);
+                    } else {
+                        snprintf(msg, sizeof(msg), "JSON Validation Error at line %d", error_line);
+                    }
+                    MessageBoxA(app->hwnd, msg, "Validate JSON", MB_ICONERROR);
+                }
+            }
+            break;
+        }
+
+        case ID_SETTINGS_SHORTCUTS:
+            // Show keyboard shortcuts dialog (basic display)
+            MessageBoxA(app->hwnd,
+                       "Keyboard Shortcuts:\n\n"
+                       "Ctrl+N - New File\n"
+                       "Ctrl+O - Open File\n"
+                       "Ctrl+S - Save\n"
+                       "Ctrl+Shift+S - Save As\n"
+                       "Ctrl+T - New Tab\n"
+                       "Ctrl+W - Close Tab\n"
+                       "Ctrl+Z - Undo\n"
+                       "Ctrl+Y - Redo\n"
+                       "Ctrl+F - Find\n"
+                       "Ctrl++ - Zoom In\n"
+                       "Ctrl+- - Zoom Out\n"
+                       "Ctrl+0 - Reset Zoom",
+                       "Keyboard Shortcuts",
+                       MB_ICONINFORMATION);
+            break;
+
+        // Encoding selection (ID_FILE_ENCODING + 0-4)
+        case ID_FILE_ENCODING + 0:
+        case ID_FILE_ENCODING + 1:
+        case ID_FILE_ENCODING + 2:
+        case ID_FILE_ENCODING + 3:
+        case ID_FILE_ENCODING + 4: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) {
+                tab->editor.encoding = (EncodingType)(LOWORD(wParam) - ID_FILE_ENCODING);
+                tab_manager_update_statusbar(&app->tab_mgr);
+            }
+            break;
+        }
+
+        // Line ending selection (ID_FILE_LINEENDING + 0-2)
+        case ID_FILE_LINEENDING + 0:
+        case ID_FILE_LINEENDING + 1:
+        case ID_FILE_LINEENDING + 2: {
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) {
+                tab->editor.line_ending = (LineEndingType)(LOWORD(wParam) - ID_FILE_LINEENDING);
+                tab_manager_update_statusbar(&app->tab_mgr);
+            }
+            break;
+        }
             
         case ID_HELP_ABOUT:
             MessageBoxA(app->hwnd, 
@@ -607,8 +885,10 @@ void app_on_keydown(App *app, WPARAM wParam) {
             case 'T': // Ctrl+T - New Tab
                 tab_manager_new_tab(&app->tab_mgr);
                 return;
-            case 'W': // Ctrl+W - Close Tab
-                if (app->tab_mgr.count > 1) {
+            case 'W': // Ctrl+W - Close Tab or Cycle Split
+                if (app->split_mode != SPLIT_NONE) {
+                    app_cycle_split_focus(app);
+                } else if (app->tab_mgr.count > 1) {
                     tab_manager_close_tab(&app->tab_mgr, app->tab_mgr.active_index, app->shutting_down);
                 } else {
                     app_file_new(app);
@@ -656,6 +936,15 @@ void app_on_keydown(App *app, WPARAM wParam) {
                 return;
             case 'V': // Ctrl+V - Paste
                 if (tab) editor_paste(&tab->editor);
+                return;
+            case VK_OEM_PLUS: // Ctrl+= (Zoom In)
+                app_handle_zoom(app, 10);
+                return;
+            case VK_OEM_MINUS: // Ctrl+- (Zoom Out)
+                app_handle_zoom(app, -10);
+                return;
+            case '0': // Ctrl+0 (Reset Zoom)
+                app_reset_zoom(app);
                 return;
         }
     }
@@ -760,4 +1049,866 @@ void app_apply_theme(const Theme *theme) {
     
     // Trigger redraw
     InvalidateRect(g_app.hwnd, NULL, TRUE);
+}
+
+// ============================================================================
+// Auto Save & Session Restore
+// ============================================================================
+
+static char* app_get_session_path(void) {
+    static char path[MAX_PATH];
+    char appdata[MAX_PATH];
+    
+    if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) != S_OK) {
+        return NULL;
+    }
+    
+    snprintf(path, MAX_PATH, "%s\\FastPad\\session.json", appdata);
+    
+    // Ensure directory exists
+    char dir[MAX_PATH];
+    strncpy(dir, path, MAX_PATH);
+    char *p = strrchr(dir, '\\');
+    if (p) {
+        *p = '\0';
+        CreateDirectoryA(dir, NULL);
+    }
+    
+    return path;
+}
+
+void app_init_session(App *app) {
+    // Restore previous session
+    app_restore_session(app);
+    
+    // Load recent files
+    char recent_path[MAX_PATH];
+    char appdata[MAX_PATH];
+    if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) == S_OK) {
+        snprintf(recent_path, MAX_PATH, "%s\\FastPad\\recent.json", appdata);
+        
+        FILE *f = fopen(recent_path, "r");
+        if (f) {
+            char line[MAX_PATH * 2];
+            while (fgets(line, sizeof(line), f) && app->recent_count < MAX_RECENT_FILES) {
+                // Remove trailing newline
+                size_t len = strlen(line);
+                if (len > 0 && line[len-1] == '\n') line[len-1] = '\0';
+                if (strlen(line) > 0) {
+                    strncpy(app->recent_files[app->recent_count], line, MAX_PATH - 1);
+                    app->recent_files[app->recent_count][MAX_PATH - 1] = '\0';
+                    app->recent_count++;
+                }
+            }
+            fclose(f);
+        }
+    }
+    
+    // Update recent files menu
+    app_update_recent_menu(app);
+}
+
+void app_save_session(App *app) {
+    char *session_path = app_get_session_path();
+    if (!session_path) return;
+    
+    FILE *f = fopen(session_path, "w");
+    if (!f) return;
+    
+    fprintf(f, "{\n");
+    fprintf(f, "  \"tabs\": [\n");
+    
+    for (int i = 0; i < app->tab_mgr.count; i++) {
+        Tab *tab = &app->tab_mgr.tabs[i];
+        fprintf(f, "    {\n");
+        fprintf(f, "      \"filename\": \"%s\",\n", tab->filename);
+        fprintf(f, "      \"cursor\": %lld,\n", (long long)tab->editor.caret);
+        fprintf(f, "      \"scroll_y\": %d,\n", tab->editor.viewport.scroll_y);
+        fprintf(f, "      \"scroll_x\": %d,\n", tab->editor.viewport.scroll_x);
+        fprintf(f, "      \"modified\": %s\n", tab->editor.modified ? "true" : "false");
+        fprintf(f, "    }%s\n", (i < app->tab_mgr.count - 1) ? "," : "");
+    }
+    
+    fprintf(f, "  ],\n");
+    fprintf(f, "  \"active_index\": %d\n", app->tab_mgr.active_index);
+    fprintf(f, "}\n");
+    
+    fclose(f);
+}
+
+void app_restore_session(App *app) {
+    char *session_path = app_get_session_path();
+    if (!session_path) return;
+    
+    FILE *f = fopen(session_path, "r");
+    if (!f) return;
+    
+    // Parse simple JSON (no external dependencies)
+    char buffer[8192];
+    int bytes_read = fread(buffer, 1, sizeof(buffer) - 1, f);
+    fclose(f);
+    
+    if (bytes_read <= 0) return;
+    buffer[bytes_read] = '\0';
+    
+    // Clear current tabs
+    while (app->tab_mgr.count > 1) {
+        tab_manager_close_tab(&app->tab_mgr, 0, false);
+    }
+    
+    // Simple parsing - look for "filename" entries
+    int tab_count = 0;
+    char filenames[20][MAX_PATH];
+    int cursors[20] = {0};
+    int scroll_ys[20] = {0};
+    int scroll_xs[20] = {0};
+    int actives[20] = {0};
+    bool modifieds[20] = {0};
+    
+    // Count tabs and extract data
+    char *json = buffer;
+    char *next;
+    
+    while ((next = strstr(json, "\"filename\":")) != NULL) {
+        if (tab_count >= 20) break;
+        
+        // Extract filename
+        char *start = next + strlen("\"filename\":");
+        while (*start == ' ' || *start == '\"') start++;
+        char *end = start;
+        while (*end && *end != '"' && *end != '\n') end++;
+        
+        int len = (int)(end - start);
+        if (len > MAX_PATH - 1) len = MAX_PATH - 1;
+        strncpy(filenames[tab_count], start, len);
+        filenames[tab_count][len] = '\0';
+        
+        // Look for "cursor": after this filename entry
+        char *cursor_pos = next + 100;
+        if ((cursor_pos = strstr(cursor_pos, "\"cursor\":")) != NULL) {
+            sscanf(cursor_pos + 9, "%d", &cursors[tab_count]);
+        }
+        if ((cursor_pos = strstr(cursor_pos, "\"scroll_y\":")) != NULL) {
+            sscanf(cursor_pos + 11, "%d", &scroll_ys[tab_count]);
+        }
+        if ((cursor_pos = strstr(cursor_pos, "\"scroll_x\":")) != NULL) {
+            sscanf(cursor_pos + 11, "%d", &scroll_xs[tab_count]);
+        }
+        if ((cursor_pos = strstr(cursor_pos, "\"modified\":")) != NULL) {
+            modifieds[tab_count] = (strstr(cursor_pos, "true") != NULL);
+        }
+        
+        tab_count++;
+        json = end;
+    }
+    
+    // Get active index
+    if ((next = strstr(buffer, "\"active_index\":")) != NULL) {
+        sscanf(next + 14, "%d", &actives[0]);
+    }
+    
+    // Create tabs for restored files
+    for (int i = 0; i < tab_count; i++) {
+        if (i > 0) {
+            tab_manager_new_tab(&app->tab_mgr);
+        }
+        
+        Tab *tab = tab_manager_get_active(&app->tab_mgr);
+        if (!tab) break;
+        
+        // Load file if not "Untitled"
+        if (strcmp(filenames[i], "Untitled") != 0) {
+            file_load(app->hwnd, filenames[i], &tab->editor.buffer);
+            tab_manager_set_tab_filename(&app->tab_mgr, i, filenames[i]);
+            
+            // Check for auto-save recovery
+            char auto_path[MAX_PATH];
+            file_get_auto_save_path(app, filenames[i], auto_path, MAX_PATH);
+            
+            // If auto-save is newer, offer to recover
+            FILE *af = fopen(auto_path, "r");
+            if (af) {
+                fclose(af);
+                // For now, just use the saved file content
+                // Could add dialog to ask user
+            }
+        }
+        
+        tab->editor.caret = cursors[i];
+        tab->editor.viewport.scroll_y = scroll_ys[i];
+        tab->editor.viewport.scroll_x = scroll_xs[i];
+        
+        // Update title with unsaved indicator if needed
+        tab_update_title(tab);
+    }
+    
+    // Switch to active tab
+    if (actives[0] >= 0 && actives[0] < app->tab_mgr.count) {
+        tab_manager_switch_tab(&app->tab_mgr, actives[0]);
+    }
+}
+
+void app_on_idle(App *app) {
+    if (!app->auto_save_enabled) return;
+    
+    // Check if 3 seconds have passed since last edit
+    DWORD now = GetTickCount();
+    if (now - app->last_edit_time > 3000) {
+        Tab *tab = tab_manager_get_active(&app->tab_mgr);
+        if (tab && tab->editor.modified && strcmp(tab->filename, "Untitled") != 0) {
+            // Auto-save
+            file_auto_save(app, tab->filename, &tab->editor.buffer);
+            
+            // Update status to show auto-saved
+            app_update_statusbar(app);
+        }
+        app->last_edit_time = now;  // Reset to prevent repeated saves
+    }
+}
+
+void app_mark_modified(App *app) {
+    app->last_edit_time = GetTickCount();
+}
+
+void app_update_recent_menu(App *app) {
+    // Find the Recent Files submenu by iterating through File menu items
+    HMENU file_menu = GetSubMenu(app->menu, 0);
+    if (!file_menu) return;
+    
+    int recent_menu_idx = -1;
+    for (int i = 0; i < GetMenuItemCount(file_menu); i++) {
+        char item_text[64];
+        GetMenuStringA(file_menu, i, item_text, sizeof(item_text), MF_BYPOSITION);
+        
+        if (strncmp(item_text, "&Recent", 7) == 0) {
+            recent_menu_idx = i;
+            break;
+        }
+    }
+    
+    if (recent_menu_idx == -1) return;
+    
+    HMENU recent_menu = GetSubMenu(file_menu, recent_menu_idx);
+    if (!recent_menu) return;
+    
+    // Clear existing items
+    while (RemoveMenu(recent_menu, 0, MF_BYPOSITION)) {}
+    
+    if (app->recent_count == 0) {
+        AppendMenuA(recent_menu, MF_STRING, 1, "(Empty)");
+        EnableMenuItem(recent_menu, 1, MF_GRAYED);
+    } else {
+        for (int j = 0; j < app->recent_count; j++) {
+            char display_name[MAX_PATH];
+            const char *filename = app->recent_files[j];
+            const char *basename = strrchr(filename, '\\');
+            if (basename) basename++;
+            else basename = filename;
+            
+            snprintf(display_name, sizeof(display_name), "%d. %s", j + 1, basename);
+            AppendMenuA(recent_menu, MF_STRING, ID_FILE_RECENT + j, display_name);
+        }
+        
+        AppendMenuA(recent_menu, MF_SEPARATOR, 0, NULL);
+        AppendMenuA(recent_menu, MF_STRING, ID_FILE_RECENT + 100, "Clear Recent");
+    }
+}
+
+// ============================================================================
+// Recent Files Management
+// ============================================================================
+
+void recent_files_add(App *app, const char *filename) {
+    if (!filename || filename[0] == '\0') return;
+    if (strcmp(filename, "Untitled") == 0) return;
+    
+    // Check if already in list
+    for (int i = 0; i < app->recent_count; i++) {
+        if (strcmp(app->recent_files[i], filename) == 0) {
+            // Move to front
+            char temp[MAX_PATH];
+            strncpy(temp, filename, MAX_PATH);
+            
+            // Shift others down
+            for (int j = i; j > 0 && j < MAX_RECENT_FILES - 1; j--) {
+                strncpy(app->recent_files[j], app->recent_files[j-1], MAX_PATH);
+            }
+            strncpy(app->recent_files[0], temp, MAX_PATH);
+            app_update_recent_menu(app);
+            recent_files_save(app);
+            return;
+        }
+    }
+    
+    // Add to front
+    for (int i = app->recent_count - 1; i >= 0; i--) {
+        strncpy(app->recent_files[i + 1], app->recent_files[i], MAX_PATH);
+        if (i == MAX_RECENT_FILES - 2) break;
+    }
+    
+    strncpy(app->recent_files[0], filename, MAX_PATH - 1);
+    app->recent_files[0][MAX_PATH - 1] = '\0';
+    
+    if (app->recent_count < MAX_RECENT_FILES) {
+        app->recent_count++;
+    }
+    
+    app_update_recent_menu(app);
+    recent_files_save(app);
+}
+
+void recent_files_remove(App *app, const char *filename) {
+    int idx = -1;
+    for (int i = 0; i < app->recent_count; i++) {
+        if (strcmp(app->recent_files[i], filename) == 0) {
+            idx = i;
+            break;
+        }
+    }
+    
+    if (idx == -1) return;
+    
+    // Shift remaining items
+    for (int i = idx; i < app->recent_count - 1; i++) {
+        strncpy(app->recent_files[i], app->recent_files[i + 1], MAX_PATH);
+    }
+    app->recent_count--;
+    
+    app_update_recent_menu(app);
+    recent_files_save(app);
+}
+
+void recent_files_clear(App *app) {
+    app->recent_count = 0;
+    app_update_recent_menu(app);
+    recent_files_save(app);
+}
+
+const char** app_get_recent_files(App *app, int *count) {
+    *count = app->recent_count;
+    return (const char**)app->recent_files;
+}
+
+static void recent_files_save(App *app) {
+    char recent_path[MAX_PATH];
+    char appdata[MAX_PATH];
+    
+    if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) != S_OK) {
+        return;
+    }
+    
+    snprintf(recent_path, MAX_PATH, "%s\\FastPad\\recent.json", appdata);
+    
+    // Ensure directory exists
+    char dir[MAX_PATH];
+    strncpy(dir, recent_path, MAX_PATH);
+    char *p = strrchr(dir, '\\');
+    if (p) {
+        *p = '\0';
+        CreateDirectoryA(dir, NULL);
+    }
+    
+    FILE *f = fopen(recent_path, "w");
+    if (!f) return;
+    
+    for (int i = 0; i < app->recent_count; i++) {
+        fprintf(f, "%s\n", app->recent_files[i]);
+    }
+    
+    fclose(f);
+}
+
+// ============================================================================
+// Zoom Functions
+// ============================================================================
+
+void app_handle_zoom(App *app, int delta) {
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (!tab) return;
+    
+    // Adjust zoom level within bounds
+    app->zoom_level += delta;
+    if (app->zoom_level < 50) app->zoom_level = 50;
+    if (app->zoom_level > 200) app->zoom_level = 200;
+    
+    // Calculate zoomed font size
+    int base_size = app->font_settings.font_size;
+    int zoomed_size = (base_size * app->zoom_level) / 100;
+    if (zoomed_size < 5) zoomed_size = 5;
+    if (zoomed_size > 200) zoomed_size = 200;
+    
+    // Recreate font for active editor with new size
+    HFONT old_font = tab->editor.font;
+    tab->editor.font = CreateFontA(
+        zoomed_size,
+        8, // FONT_WIDTH
+        0, 0,
+        app->font_settings.bold ? FW_BOLD : FW_NORMAL,
+        FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        DEFAULT_QUALITY, FIXED_PITCH | FF_DONTCARE,
+        app->font_settings.font_family
+    );
+    if (!tab->editor.font) {
+        tab->editor.font = GetStockObject(SYSTEM_FIXED_FONT);
+    }
+    if (old_font) DeleteObject(old_font);
+    
+    // Update viewport metrics
+    HDC hdc = GetDC(tab->hwnd);
+    if (hdc) {
+        render_calc_metrics(&tab->editor, hdc);
+        ReleaseDC(tab->hwnd, hdc);
+    }
+    
+    // Resize editor to recalculate visible lines/cols
+    RECT rc;
+    GetClientRect(app->hwnd, &rc);
+    int tab_top = app->tab_mgr.height;
+    int editor_height = rc.bottom - tab_top;
+    
+    if (app->statusbar && app->show_statusbar) {
+        RECT sb_rect;
+        GetWindowRect(app->statusbar, &sb_rect);
+        editor_height -= (sb_rect.bottom - sb_rect.top);
+    }
+    
+    render_resize(&tab->editor, rc.right, editor_height);
+    
+    // Redraw
+    InvalidateRect(app->hwnd, NULL, TRUE);
+    app_update_statusbar(app);
+}
+
+void app_reset_zoom(App *app) {
+    app->zoom_level = 100;
+    app_handle_zoom(app, 0);  // Re-apply with default zoom
+}
+
+// ============================================================================
+// Custom Shortcuts Functions
+// ============================================================================
+
+static void app_init_default_shortcuts(App *app) {
+    // Initialize with default shortcuts
+    app->shortcut_count = 0;
+    
+    // File operations
+    app->shortcuts[app->shortcut_count].key = 'N';
+    app->shortcuts[app->shortcut_count].modifiers = MOD_CONTROL;
+    strncpy(app->shortcuts[app->shortcut_count].action, "file_new", 32);
+    app->shortcut_count++;
+    
+    app->shortcuts[app->shortcut_count].key = 'O';
+    app->shortcuts[app->shortcut_count].modifiers = MOD_CONTROL;
+    strncpy(app->shortcuts[app->shortcut_count].action, "file_open", 32);
+    app->shortcut_count++;
+    
+    app->shortcuts[app->shortcut_count].key = 'S';
+    app->shortcuts[app->shortcut_count].modifiers = MOD_CONTROL;
+    strncpy(app->shortcuts[app->shortcut_count].action, "file_save", 32);
+    app->shortcut_count++;
+    
+    app->shortcuts[app->shortcut_count].key = 'S';
+    app->shortcuts[app->shortcut_count].modifiers = MOD_CONTROL | MOD_SHIFT;
+    strncpy(app->shortcuts[app->shortcut_count].action, "file_save_as", 32);
+    app->shortcut_count++;
+    
+    // Edit operations
+    app->shortcuts[app->shortcut_count].key = 'Z';
+    app->shortcuts[app->shortcut_count].modifiers = MOD_CONTROL;
+    strncpy(app->shortcuts[app->shortcut_count].action, "edit_undo", 32);
+    app->shortcut_count++;
+    
+    app->shortcuts[app->shortcut_count].key = 'Y';
+    app->shortcuts[app->shortcut_count].modifiers = MOD_CONTROL;
+    strncpy(app->shortcuts[app->shortcut_count].action, "edit_redo", 32);
+    app->shortcut_count++;
+    
+    // Zoom operations
+    app->shortcuts[app->shortcut_count].key = VK_OEM_PLUS;
+    app->shortcuts[app->shortcut_count].modifiers = MOD_CONTROL;
+    strncpy(app->shortcuts[app->shortcut_count].action, "zoom_in", 32);
+    app->shortcut_count++;
+    
+    app->shortcuts[app->shortcut_count].key = VK_OEM_MINUS;
+    app->shortcuts[app->shortcut_count].modifiers = MOD_CONTROL;
+    strncpy(app->shortcuts[app->shortcut_count].action, "zoom_out", 32);
+    app->shortcut_count++;
+    
+    app->shortcuts[app->shortcut_count].key = '0';
+    app->shortcuts[app->shortcut_count].modifiers = MOD_CONTROL;
+    strncpy(app->shortcuts[app->shortcut_count].action, "zoom_reset", 32);
+    app->shortcut_count++;
+}
+
+void app_load_shortcuts(App *app) {
+    // Initialize with defaults first
+    app_init_default_shortcuts(app);
+    
+    // Try to load from JSON file
+    char shortcuts_path[MAX_PATH];
+    char appdata[MAX_PATH];
+    
+    if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) != S_OK) {
+        return;
+    }
+    
+    snprintf(shortcuts_path, MAX_PATH, "%s\\FastPad\\shortcuts.json", appdata);
+    
+    // Ensure directory exists
+    char dir[MAX_PATH];
+    strncpy(dir, shortcuts_path, MAX_PATH);
+    char *p = strrchr(dir, '\\');
+    if (p) {
+        *p = '\0';
+        CreateDirectoryA(dir, NULL);
+    }
+    
+    FILE *f = fopen(shortcuts_path, "r");
+    if (!f) return;
+    
+    // Simple JSON parsing - just count shortcuts for now
+    // In a full implementation, we'd parse the JSON properly
+    char buffer[8192];
+    int bytes_read = fread(buffer, 1, sizeof(buffer) - 1, f);
+    fclose(f);
+    
+    if (bytes_read <= 0) return;
+    buffer[bytes_read] = '\0';
+    
+    // For now, keep defaults - full JSON parsing would require more code
+    // This gives us a working foundation
+}
+
+void app_save_shortcuts(App *app) {
+    char shortcuts_path[MAX_PATH];
+    char appdata[MAX_PATH];
+    
+    if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) != S_OK) {
+        return;
+    }
+    
+    snprintf(shortcuts_path, MAX_PATH, "%s\\FastPad\\shortcuts.json", appdata);
+    
+    // Ensure directory exists
+    char dir[MAX_PATH];
+    strncpy(dir, shortcuts_path, MAX_PATH);
+    char *p = strrchr(dir, '\\');
+    if (p) {
+        *p = '\0';
+        CreateDirectoryA(dir, NULL);
+    }
+    
+    FILE *f = fopen(shortcuts_path, "w");
+    if (!f) return;
+    
+    fprintf(f, "{\n");
+    fprintf(f, "  \"shortcuts\": [\n");
+    for (int i = 0; i < app->shortcut_count; i++) {
+        fprintf(f, "    {\n");
+        fprintf(f, "      \"key\": %d,\n", app->shortcuts[i].key);
+        fprintf(f, "      \"modifiers\": %d,\n", app->shortcuts[i].modifiers);
+        fprintf(f, "      \"action\": \"%s\"\n", app->shortcuts[i].action);
+        fprintf(f, "    }%s\n", (i < app->shortcut_count - 1) ? "," : "");
+    }
+    fprintf(f, "  ]\n");
+    fprintf(f, "}\n");
+    
+    fclose(f);
+}
+
+// ============================================================================
+// Split View Functions
+// ============================================================================
+
+void app_split_toggle(App *app, SplitMode mode) {
+    if (app->split_mode == mode) {
+        // Already in this mode, close it
+        app_split_close(app);
+    } else {
+        app->split_mode = mode;
+        app->split_ratio = 0.5f;
+        app->active_split = 0;
+        InvalidateRect(app->hwnd, NULL, TRUE);
+    }
+    // Update menu checkmarks
+    CheckMenuItem(app->menu, ID_VIEW_SPLIT_HORIZ,
+                  app->split_mode == SPLIT_HORIZONTAL ? MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(app->menu, ID_VIEW_SPLIT_VERT,
+                  app->split_mode == SPLIT_VERTICAL ? MF_CHECKED : MF_UNCHECKED);
+}
+
+void app_split_close(App *app) {
+    app->split_mode = SPLIT_NONE;
+    app->active_split = 0;
+    CheckMenuItem(app->menu, ID_VIEW_SPLIT_HORIZ, MF_UNCHECKED);
+    CheckMenuItem(app->menu, ID_VIEW_SPLIT_VERT, MF_UNCHECKED);
+    InvalidateRect(app->hwnd, NULL, TRUE);
+}
+
+void app_cycle_split_focus(App *app) {
+    if (app->split_mode == SPLIT_NONE) return;
+    app->active_split = (app->active_split + 1) % 2;
+    InvalidateRect(app->hwnd, NULL, TRUE);
+}
+
+// ============================================================================
+// Syntax Highlighting Functions
+// ============================================================================
+
+void app_toggle_highlight(App *app) {
+    app->highlight_enabled = !app->highlight_enabled;
+    CheckMenuItem(app->menu, ID_VIEW_HIGHLIGHT,
+                  app->highlight_enabled ? MF_CHECKED : MF_UNCHECKED);
+    InvalidateRect(app->hwnd, NULL, TRUE);
+}
+
+// Default highlight theme colors
+static HighlightTheme g_default_theme = {
+    "default",
+    RGB(86, 156, 214),     // keyword - blue
+    RGB(206, 145, 120),    // string - orange
+    RGB(106, 153, 85),     // number - green
+    RGB(87, 166, 74),      // comment - green
+    RGB(78, 201, 176),     // type - cyan
+    RGB(220, 220, 170),    // function - yellow
+    RGB(180, 180, 180),    // operator - gray
+    RGB(86, 156, 214),    // tag - blue
+    RGB(186, 140, 170),    // attribute - purple
+    RGB(156, 220, 254),    // property - light blue
+    RGB(220, 220, 220)     // normal - light gray
+};
+
+COLORREF get_token_color(HighlightTokenType type) {
+    switch (type) {
+        case HL_TOKEN_KEYWORD: return g_default_theme.keyword;
+        case HL_TOKEN_STRING: return g_default_theme.string;
+        case HL_TOKEN_NUMBER: return g_default_theme.number;
+        case HL_TOKEN_COMMENT: return g_default_theme.comment;
+        case HL_TOKEN_TYPE: return g_default_theme.type;
+        case HL_TOKEN_FUNCTION: return g_default_theme.function;
+        case HL_TOKEN_OPERATOR: return g_default_theme.operator_;
+        case HL_TOKEN_TAG: return g_default_theme.tag;
+        case HL_TOKEN_ATTRIBUTE: return g_default_theme.attribute;
+        case HL_TOKEN_PROPERTY: return g_default_theme.property;
+        default: return g_default_theme.normal;
+    }
+}
+
+LanguageType detect_language(const char *filename) {
+    if (!filename) return LANG_NONE;
+
+    const char *ext = strrchr(filename, '.');
+    if (!ext) return LANG_NONE;
+    ext++;
+
+    // JSON
+    if (strcmp(ext, "json") == 0) return LANG_JSON;
+    // XML
+    if (strcmp(ext, "xml") == 0) return LANG_XML;
+    // HTML
+    if (strcmp(ext, "html") == 0 || strcmp(ext, "htm") == 0) return LANG_HTML;
+    // CSS
+    if (strcmp(ext, "css") == 0) return LANG_CSS;
+    // JavaScript
+    if (strcmp(ext, "js") == 0) return LANG_JAVASCRIPT;
+    // Python
+    if (strcmp(ext, "py") == 0) return LANG_PYTHON;
+    // Markdown
+    if (strcmp(ext, "md") == 0 || strcmp(ext, "markdown") == 0) return LANG_MARKDOWN;
+    // INI
+    if (strcmp(ext, "ini") == 0 || strcmp(ext, "cfg") == 0 || strcmp(ext, "conf") == 0) return LANG_INI;
+    // YAML
+    if (strcmp(ext, "yaml") == 0 || strcmp(ext, "yml") == 0) return LANG_YAML;
+    // SQL
+    if (strcmp(ext, "sql") == 0) return LANG_SQL;
+    // C
+    if (strcmp(ext, "c") == 0 || strcmp(ext, "h") == 0) return LANG_C;
+    // C++
+    if (strcmp(ext, "cpp") == 0 || strcmp(ext, "cc") == 0 || strcmp(ext, "cxx") == 0 ||
+        strcmp(ext, "hpp") == 0 || strcmp(ext, "hh") == 0) return LANG_CPP;
+    // Java
+    if (strcmp(ext, "java") == 0) return LANG_JAVA;
+
+    return LANG_NONE;
+}
+
+// Simple keyword detection for syntax highlighting
+static bool is_keyword(const char *word, int len) {
+    static const char *keywords[] = {
+        "if", "else", "for", "while", "do", "switch", "case", "default", "break", "continue",
+        "return", "goto", "try", "catch", "throw", "finally", "class", "struct", "union",
+        "enum", "typedef", "sizeof", "typeof", "var", "let", "const", "function", "def",
+        "import", "export", "from", "as", "async", "await", "yield", "static", "public",
+        "private", "protected", "virtual", "override", "final", "abstract", "extends",
+        "implements", "new", "delete", "this", "super", "true", "false", "null", "nil",
+        "none", "void", "bool", "int", "long", "float", "double", "char", "string",
+        "byte", "short", "unsigned", "signed", "const", "inline", "extern", "register",
+        "volatile", "auto", "namespace", "using", "template", "typename", "decltype",
+        "auto", "nullptr", "and", "or", "not", "in", "is", "pass", "lambda", "with"
+    };
+    int count = sizeof(keywords) / sizeof(keywords[0]);
+
+    for (int i = 0; i < count; i++) {
+        if (strncmp(word, keywords[i], len) == 0 && keywords[i][len] == '\0') {
+            return true;
+        }
+    }
+    return false;
+}
+
+void highlight_line(const char *line, int len, LanguageType lang, HighlightToken *tokens, int *token_count) {
+    *token_count = 0;
+    if (!line || len <= 0) return;
+
+    int i = 0;
+
+    // Handle line comments
+    if (lang == LANG_PYTHON || lang == LANG_JAVASCRIPT || lang == LANG_C ||
+        lang == LANG_CPP || lang == LANG_JAVA || lang == LANG_SQL) {
+        // Check for // comment
+        if (len >= 2 && line[0] == '/' && line[1] == '/') {
+            tokens[0].type = HL_TOKEN_COMMENT;
+            tokens[0].start = 0;
+            tokens[0].end = len;
+            *token_count = 1;
+            return;
+        }
+        // Check for -- comment (SQL)
+        if (lang == LANG_SQL && len >= 2 && line[0] == '-' && line[1] == '-') {
+            tokens[0].type = HL_TOKEN_COMMENT;
+            tokens[0].start = 0;
+            tokens[0].end = len;
+            *token_count = 1;
+            return;
+        }
+        // Check for # comment (Python, etc.)
+        if (len >= 1 && line[0] == '#') {
+            tokens[0].type = HL_TOKEN_COMMENT;
+            tokens[0].start = 0;
+            tokens[0].end = len;
+            *token_count = 1;
+            return;
+        }
+    }
+
+    // Tokenize the line
+    while (i < len && *token_count < 32) {
+        char c = line[i];
+
+        // Skip whitespace
+        if (c == ' ' || c == '\t') {
+            i++;
+            continue;
+        }
+
+        // String literals
+        if (c == '"' || c == '\'') {
+            char quote = c;
+            int start = i;
+            i++;
+            while (i < len && line[i] != quote) {
+                if (line[i] == '\\' && i + 1 < len) i++;
+                i++;
+            }
+            if (i < len) i++; // closing quote
+            tokens[*token_count].type = HL_TOKEN_STRING;
+            tokens[*token_count].start = start;
+            tokens[*token_count].end = i;
+            (*token_count)++;
+            continue;
+        }
+
+        // Numbers
+        if ((c >= '0' && c <= '9') || (c == '.' && i + 1 < len && line[i + 1] >= '0' && line[i + 1] <= '9')) {
+            int start = i;
+            while (i < len && ((line[i] >= '0' && line[i] <= '9') || line[i] == '.' ||
+                              line[i] == 'x' || line[i] == 'X' || line[i] == 'e' || line[i] == 'E' ||
+                              line[i] == 'f' || line[i] == 'F' || line[i] == 'l' || line[i] == 'L' ||
+                              (line[i] >= 'a' && line[i] <= 'f') || (line[i] >= 'A' && line[i] <= 'F'))) {
+                i++;
+            }
+            tokens[*token_count].type = HL_TOKEN_NUMBER;
+            tokens[*token_count].start = start;
+            tokens[*token_count].end = i;
+            (*token_count)++;
+            continue;
+        }
+
+        // HTML/XML tags
+        if ((lang == LANG_HTML || lang == LANG_XML || lang == LANG_JSON) && c == '<') {
+            int start = i;
+            while (i < len && line[i] != '>') i++;
+            if (i < len) i++;
+            tokens[*token_count].type = HL_TOKEN_TAG;
+            tokens[*token_count].start = start;
+            tokens[*token_count].end = i;
+            (*token_count)++;
+            continue;
+        }
+
+        // Identifiers and keywords
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '@') {
+            int start = i;
+            while (i < len && ((line[i] >= 'a' && line[i] <= 'z') || (line[i] >= 'A' && line[i] <= 'Z') ||
+                              (line[i] >= '0' && line[i] <= '9') || line[i] == '_' || line[i] == '@')) {
+                i++;
+            }
+            int word_len = i - start;
+
+            // Check for keywords
+            if (is_keyword(line + start, word_len)) {
+                tokens[*token_count].type = HL_TOKEN_KEYWORD;
+            } else if (i < len && line[i] == '(') {
+                // Function call
+                tokens[*token_count].type = HL_TOKEN_FUNCTION;
+            } else {
+                tokens[*token_count].type = HL_TOKEN_NORMAL;
+            }
+            tokens[*token_count].start = start;
+            tokens[*token_count].end = i;
+            (*token_count)++;
+            continue;
+        }
+
+        // Operators
+        if (c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '=' ||
+            c == '<' || c == '>' || c == '!' || c == '&' || c == '|' || c == '^' || c == '~') {
+            int start = i;
+            // Handle multi-character operators
+            while (i < len && (line[i] == '+' || line[i] == '-' || line[i] == '*' || line[i] == '/' ||
+                              line[i] == '%' || line[i] == '=' || line[i] == '<' || line[i] == '>' ||
+                              line[i] == '!' || line[i] == '&' || line[i] == '|' || line[i] == '^' ||
+                              line[i] == '~')) {
+                i++;
+            }
+            tokens[*token_count].type = HL_TOKEN_OPERATOR;
+            tokens[*token_count].start = start;
+            tokens[*token_count].end = i;
+            (*token_count)++;
+            continue;
+        }
+
+        // CSS properties (e.g., "color:", "background:")
+        if (lang == LANG_CSS && i > 0 && line[i] == ':' && line[i-1] != ':') {
+            // Check if previous word is a property
+            int j = i - 1;
+            while (j > 0 && (line[j] == ' ' || line[j] == '\t')) j--;
+            int end = j + 1;
+            while (j > 0 && ((line[j] >= 'a' && line[j] <= 'z') || (line[j] >= 'A' && line[j] <= 'Z'))) {
+                j--;
+            }
+            j++;
+            // Check if it looks like a property name (ends with :)
+            if (end > j && line[end-1] == ':') {
+                tokens[*token_count].type = HL_TOKEN_PROPERTY;
+                tokens[*token_count].start = j;
+                tokens[*token_count].end = end;
+                (*token_count)++;
+            }
+        }
+
+        i++;
+    }
 }

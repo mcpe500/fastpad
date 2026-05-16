@@ -893,6 +893,37 @@ void editor_get_linecol(Editor *editor, int *line, int *col) {
     if (col) *col = lc.col + 1;    // 1-based for display
 }
 
+int editor_get_word_count(Editor *editor) {
+    if (!editor) return 0;
+    
+    char *text = buffer_get_text(&editor->buffer, 0, editor->buffer.size);
+    if (!text) return 0;
+    
+    int count = 0;
+    bool in_word = false;
+    
+    for (int i = 0; text[i] != '\0'; i++) {
+        char c = text[i];
+        // Word boundary: whitespace or newline character
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            in_word = false;
+        } else {
+            if (!in_word) {
+                count++;
+                in_word = true;
+            }
+        }
+    }
+    
+    free(text);
+    return count;
+}
+
+int editor_get_char_count(Editor *editor) {
+    if (!editor) return 0;
+    return editor->buffer.size;
+}
+
 void editor_scroll_to_caret(Editor *editor) {
     LineCol lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
 

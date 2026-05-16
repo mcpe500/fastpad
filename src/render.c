@@ -2,9 +2,12 @@
 #include "buffer.h"
 #include "types.h"          /* for extern App g_app */
 #include "theme.h"
+#include "app.h"            /* for g_app, syntax highlighting */
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>        /* for SIZE struct + GDI functions */
+#include <ctype.h>          /* for isalnum */
+#include <string.h>         /* for strcmp */
 
 #define FONT_HEIGHT 16
 #define FONT_WIDTH 8
@@ -383,4 +386,41 @@ int render_y_to_line(Editor *editor, int y) {
 
 int render_line_to_y(Editor *editor, int line) {
     return (line - editor->viewport.scroll_y) * editor->viewport.line_height;
+}
+
+// ============================================================================
+// Line Numbers and Search Highlights
+// ============================================================================
+
+void render_set_show_line_numbers(Editor *editor, bool show) {
+    if (editor) {
+        editor->show_line_numbers = show;
+    }
+}
+
+bool render_get_show_line_numbers(Editor *editor) {
+    return editor ? editor->show_line_numbers : true;
+}
+
+void render_set_search_highlights(Editor *editor, TextPos *positions, int count) {
+    if (!editor) return;
+    
+    // Free existing highlights
+    if (editor->search_matches) {
+        free(editor->search_matches);
+        editor->search_matches = NULL;
+    }
+    
+    editor->search_matches = positions;
+    editor->search_match_count = count;
+}
+
+void render_clear_search_highlights(Editor *editor) {
+    if (!editor) return;
+    
+    if (editor->search_matches) {
+        free(editor->search_matches);
+        editor->search_matches = NULL;
+    }
+    editor->search_match_count = 0;
 }

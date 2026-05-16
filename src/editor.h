@@ -48,6 +48,12 @@ void editor_set_modified(Editor *editor, bool modified);
 // Get current line and column for status bar
 void editor_get_linecol(Editor *editor, int *line, int *col);
 
+// Get word count
+int editor_get_word_count(Editor *editor);
+
+// Get character count
+int editor_get_char_count(Editor *editor);
+
 // Scroll to make caret visible
 void editor_scroll_to_caret(Editor *editor);
 

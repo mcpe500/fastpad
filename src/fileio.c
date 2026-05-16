@@ -1,5 +1,6 @@
 #include "fileio.h"
 #include "buffer.h"
+#include "app.h"
 #include "errors.h"
 #include <windows.h>
 #include <commdlg.h>
@@ -264,4 +265,352 @@ bool file_save_dialog(HWND hwnd, char *out_filename, int out_size, GapBuffer *bu
     }
     
     return false;
+}
+
+// ============================================================================
+// Auto-save functions
+// ============================================================================
+
+void file_get_auto_save_path(App *app, const char *filename, char *out_path, int out_size) {
+    if (!app || !filename || !out_path) return;
+    
+    // Create hash from filename for safe path
+    unsigned int hash = 0;
+    for (const char *p = filename; *p; p++) {
+        hash = hash * 31 + (unsigned char)*p;
+    }
+    
+    if (app->auto_save_dir[0]) {
+        snprintf(out_path, out_size, "%s\\%u.fpad", app->auto_save_dir, hash);
+    } else {
+        // Fallback to temp directory
+        char temp_path[MAX_PATH];
+        GetTempPathA(MAX_PATH, temp_path);
+        snprintf(out_path, out_size, "%sFastPad_%u.fpad", temp_path, hash);
+    }
+}
+
+bool file_auto_save(App *app, const char *filename, GapBuffer *buffer) {
+    if (!app || !filename || !buffer) return false;
+    
+    char auto_path[MAX_PATH];
+    file_get_auto_save_path(app, filename, auto_path, MAX_PATH);
+    
+    // Get full text
+    char *text = buffer_get_text(buffer, 0, buffer->size);
+    if (!text) return false;
+    
+    // Normalize line endings to CRLF
+    char *normalized = file_normalize_line_endings(text, buffer->size);
+    free(text);
+    
+    if (!normalized) return false;
+    
+    int normalized_length = (int)strlen(normalized);
+    
+    // Ensure directory exists
+    if (app->auto_save_dir[0]) {
+        CreateDirectoryA(app->auto_save_dir, NULL);
+    }
+    
+    HANDLE hFile = CreateFileA(
+        auto_path,
+        GENERIC_WRITE,
+        0,
+        NULL,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_TEMPORARY,
+        NULL
+    );
+    
+    if (hFile == INVALID_HANDLE_VALUE) {
+        free(normalized);
+        return false;
+    }
+    
+    // Write UTF-8 BOM
+    DWORD bytesWritten;
+    unsigned char bom[] = {0xEF, 0xBB, 0xBF};
+    if (!WriteFile(hFile, bom, 3, &bytesWritten, NULL)) {
+        free(normalized);
+        CloseHandle(hFile);
+        return false;
+    }
+    
+    // Write text
+    if (!WriteFile(hFile, normalized, normalized_length, &bytesWritten, NULL)) {
+        free(normalized);
+        CloseHandle(hFile);
+        return false;
+    }
+    
+    free(normalized);
+    CloseHandle(hFile);
+    return true;
+}
+
+bool file_restore_auto_save(const char *filename, GapBuffer *buffer) {
+    (void)filename;
+    (void)buffer;
+    // Implementation would check for auto-save file and restore
+    return false;
+}
+
+// ============================================================================
+// Encoding Detection and Conversion
+// ============================================================================
+
+EncodingType file_detect_encoding(const char *data, int length) {
+    if (!data || length <= 0) {
+        return ENCODING_UTF8;
+    }
+    
+    // Check for UTF-16 BOM
+    if (length >= 2) {
+        if ((unsigned char)data[0] == 0xFF && (unsigned char)data[1] == 0xFE) {
+            return ENCODING_UTF16LE;
+        }
+        if ((unsigned char)data[0] == 0xFE && (unsigned char)data[1] == 0xFF) {
+            return ENCODING_UTF16BE;
+        }
+    }
+    
+    // Check for UTF-8 BOM
+    if (file_has_bom(data, length)) {
+        return ENCODING_UTF8_BOM;
+    }
+    
+    // Check for valid UTF-8 sequences
+    bool is_valid_utf8 = true;
+    int i = 0;
+    while (i < length) {
+        unsigned char c = (unsigned char)data[i];
+        
+        // Check for ASCII
+        if (c <= 0x7F) {
+            i++;
+            continue;
+        }
+        
+        // Check for valid 2-byte UTF-8 sequence
+        if ((c & 0xE0) == 0xC0) {
+            if (i + 1 >= length || (data[i + 1] & 0xC0) != 0x80) {
+                is_valid_utf8 = false;
+                break;
+            }
+            i += 2;
+            continue;
+        }
+        
+        // Check for valid 3-byte UTF-8 sequence
+        if ((c & 0xF0) == 0xE0) {
+            if (i + 2 >= length || (data[i + 1] & 0xC0) != 0x80 || (data[i + 2] & 0xC0) != 0x80) {
+                is_valid_utf8 = false;
+                break;
+            }
+            i += 3;
+            continue;
+        }
+        
+        // Check for valid 4-byte UTF-8 sequence
+        if ((c & 0xF8) == 0xF0) {
+            if (i + 3 >= length || (data[i + 1] & 0xC0) != 0x80 || 
+                (data[i + 2] & 0xC0) != 0x80 || (data[i + 3] & 0xC0) != 0x80) {
+                is_valid_utf8 = false;
+                break;
+            }
+            i += 4;
+            continue;
+        }
+        
+        // Invalid UTF-8 start byte
+        is_valid_utf8 = false;
+        break;
+    }
+    
+    if (is_valid_utf8) {
+        return ENCODING_UTF8;
+    }
+    
+    return ENCODING_ANSI;
+}
+
+char* file_convert_encoding(const char *input, int input_len, int *output_len, 
+                           EncodingType from_enc, EncodingType to_enc) {
+    if (!input || input_len <= 0) {
+        if (output_len) *output_len = 0;
+        return NULL;
+    }
+    
+    // For now, just do simple pass-through for same encoding
+    // Full conversion would require code page tables or iconv
+    
+    char *output = (char *)malloc(input_len + 1);
+    if (!output) {
+        if (output_len) *output_len = 0;
+        return NULL;
+    }
+    
+    memcpy(output, input, input_len);
+    output[input_len] = '\0';
+    
+    if (output_len) *output_len = input_len;
+    return output;
+}
+
+char *file_normalize_line_endings_ex(const char *text, int length, LineEndingType target_ending) {
+    if (!text || length <= 0) {
+        char *result = (char *)malloc(1);
+        if (result) result[0] = '\0';
+        return result;
+    }
+    
+    // First, count how many line endings need conversion
+    int lf_count = 0;
+    int cr_count = 0;
+    bool last_was_cr = false;
+    
+    for (int i = 0; i < length; i++) {
+        if (text[i] == '\n') {
+            if (!last_was_cr) {
+                lf_count++;
+            }
+        } else if (text[i] == '\r') {
+            cr_count++;
+        }
+        last_was_cr = (text[i] == '\r');
+    }
+    
+    // Calculate output size
+    int output_size = length;
+    if (target_ending == LINE_ENDING_CRLF) {
+        // Need to add CR before LF where missing
+        output_size += lf_count;
+    } else if (target_ending == LINE_ENDING_LF) {
+        // Need to remove CR before LF
+        output_size -= cr_count;
+    } else if (target_ending == LINE_ENDING_CR) {
+        // Need to remove LF
+        output_size -= lf_count;
+    }
+    
+    char *result = (char *)malloc(output_size + 1);
+    if (!result) return NULL;
+    
+    int j = 0;
+    last_was_cr = false;
+    
+    for (int i = 0; i < length; i++) {
+        if (text[i] == '\r') {
+            if (target_ending == LINE_ENDING_CRLF) {
+                result[j++] = '\r';
+                result[j++] = '\n';
+            } else if (target_ending == LINE_ENDING_LF) {
+                // Skip CR, LF will be handled next if present
+                // Actually, output CR only
+                result[j++] = '\r';
+            } else {
+                // LINE_ENDING_CR: keep CR only
+                result[j++] = '\r';
+            }
+            last_was_cr = true;
+        } else if (text[i] == '\n') {
+            if (target_ending == LINE_ENDING_CRLF) {
+                if (!last_was_cr) {
+                    result[j++] = '\r';
+                }
+                result[j++] = '\n';
+            } else if (target_ending == LINE_ENDING_LF) {
+                result[j++] = '\n';
+            } else {
+                // LINE_ENDING_CR: skip LF
+            }
+            last_was_cr = false;
+        } else {
+            result[j++] = text[i];
+            last_was_cr = false;
+        }
+    }
+    
+    result[j] = '\0';
+    
+    return result;
+}
+
+bool file_save_with_options(HWND hwnd, const char *filename, GapBuffer *buffer, 
+                           EncodingType encoding, LineEndingType line_ending) {
+    // Get full text
+    char *text = buffer_get_text(buffer, 0, buffer->size);
+    if (!text) {
+        MessageBoxA(hwnd, ERR_FAILED_GET_TEXT, DLG_ERROR, MB_ICONERROR);
+        return false;
+    }
+    
+    // Normalize line endings
+    char *normalized = file_normalize_line_endings_ex(text, buffer->size, line_ending);
+    free(text);
+    
+    if (!normalized) {
+        MessageBoxA(hwnd, ERR_OUT_OF_MEMORY, DLG_ERROR, MB_ICONERROR);
+        return false;
+    }
+    
+    int normalized_length = (int)strlen(normalized);
+    
+    HANDLE hFile = CreateFileA(
+        filename,
+        GENERIC_WRITE,
+        0,
+        NULL,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+    
+    if (hFile == INVALID_HANDLE_VALUE) {
+        free(normalized);
+        MessageBoxA(hwnd, ERR_FAILED_CREATE_FILE, DLG_ERROR, MB_ICONERROR);
+        return false;
+    }
+    
+    DWORD bytesWritten;
+    
+    // Write BOM if needed
+    if (encoding == ENCODING_UTF8_BOM) {
+        unsigned char bom[] = {0xEF, 0xBB, 0xBF};
+        if (!WriteFile(hFile, bom, 3, &bytesWritten, NULL)) {
+            free(normalized);
+            CloseHandle(hFile);
+            MessageBoxA(hwnd, ERR_FAILED_WRITE_FILE, DLG_ERROR, MB_ICONERROR);
+            return false;
+        }
+    } else if (encoding == ENCODING_UTF16LE) {
+        unsigned char bom[] = {0xFF, 0xFE};
+        if (!WriteFile(hFile, bom, 2, &bytesWritten, NULL)) {
+            free(normalized);
+            CloseHandle(hFile);
+            MessageBoxA(hwnd, ERR_FAILED_WRITE_FILE, DLG_ERROR, MB_ICONERROR);
+            return false;
+        }
+    } else if (encoding == ENCODING_UTF16BE) {
+        unsigned char bom[] = {0xFE, 0xFF};
+        if (!WriteFile(hFile, bom, 2, &bytesWritten, NULL)) {
+            free(normalized);
+            CloseHandle(hFile);
+            MessageBoxA(hwnd, ERR_FAILED_WRITE_FILE, DLG_ERROR, MB_ICONERROR);
+            return false;
+        }
+    }
+    
+    // Write text
+    if (!WriteFile(hFile, normalized, normalized_length, &bytesWritten, NULL)) {
+        free(normalized);
+        CloseHandle(hFile);
+        MessageBoxA(hwnd, ERR_FAILED_WRITE_FILE, DLG_ERROR, MB_ICONERROR);
+        return false;
+    }
+    
+    free(normalized);
+    CloseHandle(hFile);
+    return true;
 }
