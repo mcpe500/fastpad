@@ -38,7 +38,7 @@ void app_update_statusbar(App *app);
 bool app_check_unsaved(App *app);
 
 // Handle WM_COMMAND
-void app_on_command(App *app, WPARAM wParam);
+void app_on_command(App *app, WPARAM wParam, LPARAM lParam);
 
 // Handle WM_SIZE
 void app_on_size(App *app, int width, int height);

@@ -657,8 +657,10 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
                                 SetTextColor(mem_dc, color);
                                 SetBkMode(mem_dc, TRANSPARENT);
                                 int tok_x = seg_x + (tok_start - (segment_len - remaining_len)) * editor->viewport.char_width;
+                                // Use tok->start (original) not tok_start (modified) for text pointer
+                                // tok_start is adjusted for scroll position but display_text already has text_offset
                                 TextOutA(mem_dc, tok_x, visual_line_y, 
-                                         display_text + text_offset + tok_start, 
+                                         display_text + text_offset + tok->start, 
                                          tok_len);
                             }
                             
@@ -786,4 +788,156 @@ void render_clear_search_highlights(Editor *editor) {
         editor->search_matches = NULL;
     }
     editor->search_match_count = 0;
+}
+
+// Bracket pair highlighting color
+static COLORREF get_bracket_color(int bracket_type) {
+    switch (bracket_type) {
+        case 1: return RGB(255, 255, 0);    // Yellow for ()
+        case 2: return RGB(0, 255, 255);    // Cyan for {}
+        case 3: return RGB(255, 128, 255); // Magenta for []
+        case 4: return RGB(128, 255, 128); // Light green for <>
+        case 5: return RGB(255, 165, 0);   // Orange for ""
+        case 6: return RGB(165, 255, 165); // Light green for ''
+        default: return RGB(255, 255, 255);
+    }
+}
+
+void render_draw_bracket_highlight(Editor *editor, HDC hdc) {
+    if (!editor) return;
+    if (editor->bracket_match < 0) return;
+    
+    TextPos match_pos = editor->bracket_match;
+    TextPos caret_pos = editor->caret;
+    
+    // Draw highlight for matched bracket
+    LineCol match_lc = buffer_pos_to_linecol(&editor->buffer, match_pos);
+    LineCol caret_lc = buffer_pos_to_linecol(&editor->buffer, caret_pos);
+    
+    // Calculate visual position of matched bracket
+    int match_visual_line = 0;
+    for (int l = 0; l < match_lc.line; l++) {
+        TextPos l_start = buffer_line_start(&editor->buffer, l);
+        TextPos l_end = buffer_line_end(&editor->buffer, l);
+        int l_len = l_end - l_start;
+        if (g_app.word_wrap && l_len > editor->viewport.visible_cols) {
+            match_visual_line += (l_len + editor->viewport.visible_cols - 1) / editor->viewport.visible_cols;
+        } else {
+            match_visual_line++;
+        }
+    }
+    
+    int match_display_col = byte_col_to_display_col(&editor->buffer, 
+        buffer_line_start(&editor->buffer, match_lc.line), match_pos);
+    
+    int caret_visual_line = 0;
+    for (int l = 0; l < caret_lc.line; l++) {
+        TextPos l_start = buffer_line_start(&editor->buffer, l);
+        TextPos l_end = buffer_line_end(&editor->buffer, l);
+        int l_len = l_end - l_start;
+        if (g_app.word_wrap && l_len > editor->viewport.visible_cols) {
+            caret_visual_line += (l_len + editor->viewport.visible_cols - 1) / editor->viewport.visible_cols;
+        } else {
+            caret_visual_line++;
+        }
+    }
+    
+    int caret_display_col = byte_col_to_display_col(&editor->buffer,
+        buffer_line_start(&editor->buffer, caret_lc.line), caret_pos);
+    
+    // Draw caret position bracket highlight
+    HBRUSH bracket_brush = CreateSolidBrush(get_bracket_color(editor->bracket_type));
+    HPEN bracket_pen = CreatePen(PS_SOLID, 2, get_bracket_color(editor->bracket_type));
+    
+    int tab_height = 0;  // Will be set in paint based on actual value
+    
+    // Draw matched bracket
+    int match_x = RENDER_MARGIN_WIDTH + (match_display_col - editor->viewport.scroll_x) * editor->viewport.char_width;
+    int match_y = tab_height + (match_visual_line - editor->viewport.scroll_y) * editor->viewport.line_height;
+    
+    if (match_x >= RENDER_MARGIN_WIDTH && match_x < 2000 && match_y >= 0 && match_y < 2000) {
+        SelectObject(hdc, bracket_pen);
+        Rectangle(hdc, match_x - 1, match_y, match_x + editor->viewport.char_width + 1, match_y + editor->viewport.line_height);
+    }
+    
+    // Draw caret bracket highlight if different from match
+    if (caret_pos != match_pos) {
+        int caret_x = RENDER_MARGIN_WIDTH + (caret_display_col - editor->viewport.scroll_x) * editor->viewport.char_width;
+        int caret_y = tab_height + (caret_visual_line - editor->viewport.scroll_y) * editor->viewport.line_height;
+        
+        if (caret_x >= RENDER_MARGIN_WIDTH && caret_x < 2000 && caret_y >= 0 && caret_y < 2000) {
+            SelectObject(hdc, bracket_pen);
+            Rectangle(hdc, caret_x - 1, caret_y, caret_x + editor->viewport.char_width + 1, caret_y + editor->viewport.line_height);
+        }
+    }
+    
+    DeleteObject(bracket_brush);
+    DeleteObject(bracket_pen);
+}
+
+void render_draw_autocomplete_popup(Editor *editor, HDC hdc) {
+    if (!editor) return;
+    if (!editor->autocomplete.visible) return;
+    if (editor->autocomplete.count <= 0) return;
+    
+    // Calculate position below caret
+    LineCol lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
+    int caret_display_col = get_caret_display_col(editor);
+    
+    int caret_visual_line = 0;
+    for (int l = 0; l < lc.line; l++) {
+        TextPos l_start = buffer_line_start(&editor->buffer, l);
+        TextPos l_end = buffer_line_end(&editor->buffer, l);
+        int l_len = l_end - l_start;
+        if (g_app.word_wrap && l_len > editor->viewport.visible_cols) {
+            caret_visual_line += (l_len + editor->viewport.visible_cols - 1) / editor->viewport.visible_cols;
+        } else {
+            caret_visual_line++;
+        }
+    }
+    
+    int tab_height = 0;
+    int popup_x = RENDER_MARGIN_WIDTH + (caret_display_col - editor->viewport.scroll_x) * editor->viewport.char_width;
+    int popup_y = tab_height + (caret_visual_line + 1 - editor->viewport.scroll_y) * editor->viewport.line_height;
+    
+    // Popup dimensions
+    int item_height = editor->viewport.line_height;
+    int max_width = 200;
+    int popup_height = editor->autocomplete.count * item_height;
+    if (popup_height > 200) popup_height = 200;
+    
+    // Draw background
+    HBRUSH bg_brush = CreateSolidBrush(RGB(45, 45, 48));
+    HPEN border_pen = CreatePen(PS_SOLID, 1, RGB(80, 80, 80));
+    
+    RECT popup_rect = {popup_x, popup_y, popup_x + max_width, popup_y + popup_height};
+    FillRect(hdc, &popup_rect, bg_brush);
+    SelectObject(hdc, border_pen);
+    Rectangle(hdc, popup_x, popup_y, popup_x + max_width, popup_y + popup_height);
+    
+    // Draw items
+    HFONT old_font = (HFONT)SelectObject(hdc, editor->font);
+    
+    for (int i = 0; i < editor->autocomplete.count; i++) {
+        int item_y = popup_y + i * item_height;
+        
+        // Highlight selected item
+        if (i == editor->autocomplete.selected_index) {
+            HBRUSH sel_brush = CreateSolidBrush(RGB(0, 122, 204));
+            RECT sel_rect = {popup_x + 1, item_y, popup_x + max_width - 1, item_y + item_height};
+            FillRect(hdc, &sel_rect, sel_brush);
+            DeleteObject(sel_brush);
+            SetTextColor(hdc, RGB(255, 255, 255));
+        } else {
+            SetTextColor(hdc, RGB(220, 220, 220));
+        }
+        
+        SetBkMode(hdc, TRANSPARENT);
+        TextOutA(hdc, popup_x + 5, item_y, editor->autocomplete.words[i].word, 
+                 (int)strlen(editor->autocomplete.words[i].word));
+    }
+    
+    SelectObject(hdc, old_font);
+    DeleteObject(bg_brush);
+    DeleteObject(border_pen);
 }

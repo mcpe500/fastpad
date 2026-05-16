@@ -4,7 +4,7 @@
 CC = x86_64-w64-mingw32-clang
 CFLAGS = -Os -s -ffunction-sections -fdata-sections -Wall -Wextra
 LDFLAGS = -Wl,--gc-sections -mwindows
-LIBS = -luser32 -lgdi32 -lcomdlg32 -lkernel32 -lshell32 -lcomctl32
+LIBS = -luser32 -lgdi32 -lcomdlg32 -lkernel32 -lshell32 -lcomctl32 -lole32
 
 SRCDIR = src
 BUILDDIR = build
@@ -22,7 +22,17 @@ SRCS = $(SRCDIR)/main.c \
        $(SRCDIR)/theme.c \
        $(SRCDIR)/backup.c \
        $(SRCDIR)/plugin.c \
-       $(SRCDIR)/settings.c
+       $(SRCDIR)/settings.c \
+       $(SRCDIR)/workspace.c \
+       $(SRCDIR)/explorer.c \
+       $(SRCDIR)/globalsearch.c \
+       $(SRCDIR)/notes.c \
+       $(SRCDIR)/template.c \
+       $(SRCDIR)/snippet.c \
+       $(SRCDIR)/clipboard.c \
+       $(SRCDIR)/taskmode.c \
+       $(SRCDIR)/filewatch.c \
+       $(SRCDIR)/cli.c
 
 TEST_SRCS = tests/unit_tests.c
 

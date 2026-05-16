@@ -106,6 +106,31 @@ bool editor_init(Editor *editor, HWND hwnd) {
     editor->selection.end = 0;
     editor->modified = false;
     
+    // Initialize multi-cursor (none active by default)
+    editor->cursor_count = 0;
+    
+    // Initialize column selection
+    editor->col_selection.active = false;
+    editor->col_selection.start = 0;
+    editor->col_selection.end = 0;
+    editor->col_selection.start_col = 0;
+    editor->col_selection.end_col = 0;
+    
+    // Initialize bracket highlighting
+    editor->bracket_match = -1;
+    editor->bracket_type = 0;
+    
+    // Initialize folding
+    editor->fold_count = 0;
+    
+    // Initialize autocomplete
+    editor->autocomplete.visible = false;
+    editor->autocomplete.count = 0;
+    editor->autocomplete.selected_index = -1;
+    
+    // Initialize bracket auto-close
+    editor->auto_close_brackets = true;
+    
     // Initialize undo/redo
     editor->undo.ops = (UndoOp *)malloc(sizeof(UndoOp) * UNDO_MAX_OPS);
     editor->undo.count = 0;
@@ -1012,16 +1037,15 @@ bool editor_undo(Editor *editor) {
 }
 
 bool editor_redo(Editor *editor) {
-    if (editor->redo.current <= 0) {
+    if (editor->redo.count <= 0 || editor->redo.current >= editor->redo.count) {
         return false;
     }
 
-    editor->redo.current--;
     UndoOp *op = &editor->redo.ops[editor->redo.current];
+    editor->redo.current++;
 
-    // Add back to undo history
+    // Add to undo history
     if (editor->undo.count >= editor->undo.max_ops) {
-        // Free oldest undo op text before shifting
         if (editor->undo.ops[0].text) {
             free(editor->undo.ops[0].text);
             editor->undo.ops[0].text = NULL;
@@ -1033,7 +1057,7 @@ bool editor_redo(Editor *editor) {
     }
 
     UndoOp *undo_op = &editor->undo.ops[editor->undo.count];
-    undo_op->type = op->type;  // Same type
+    undo_op->type = op->type;
     undo_op->pos = op->pos;
     undo_op->length = op->length;
     undo_op->replace_len = op->replace_len;
@@ -1045,7 +1069,7 @@ bool editor_redo(Editor *editor) {
     editor->undo.count++;
     editor->undo.current = editor->undo.count;
 
-    // Execute the redo operation
+    // Execute operation
     if (op->type == OP_INSERT) {
         buffer_insert(&editor->buffer, op->pos, op->text, op->length);
         editor->caret = op->pos + op->length;
@@ -1053,10 +1077,13 @@ bool editor_redo(Editor *editor) {
         buffer_delete(&editor->buffer, op->pos, op->length);
         editor->caret = op->pos;
     } else if (op->type == OP_REPLACE) {
-        // Redo replace: delete replacement, re-insert new text
         buffer_delete(&editor->buffer, op->pos, op->replace_len);
         buffer_insert(&editor->buffer, op->pos, op->text, op->length);
         editor->caret = op->pos + op->length;
+    }
+
+    if (editor->undo.current > editor->undo_count_at_save) {
+        editor->modified = true;
     }
 
     editor_clear_selection(editor);
@@ -1064,4 +1091,615 @@ bool editor_redo(Editor *editor) {
     InvalidateRect(editor->hwnd, NULL, FALSE);
 
     return true;
+}
+
+// ============================================================================
+// Multi-Cursor Editing
+// ============================================================================
+
+void editor_add_cursor(Editor *editor, int x, int y) {
+    if (x < RENDER_MARGIN_WIDTH) return;
+    if (editor->cursor_count >= MAX_CURSORS) return;
+    
+    int adj_x = x - RENDER_MARGIN_WIDTH;
+    int line = render_y_to_line(editor, y);
+    int col = adj_x / editor->viewport.char_width + editor->viewport.scroll_x;
+    
+    TextPos pos = buffer_linecol_to_pos(&editor->buffer, (LineCol){line, col});
+    if (pos > editor->buffer.size) pos = editor->buffer.size;
+    
+    // Check if this position already has a cursor (excluding primary)
+    for (int i = 0; i < editor->cursor_count; i++) {
+        if (editor->cursors[i].position == pos) return;
+    }
+    
+    editor->cursors[editor->cursor_count].position = pos;
+    editor->cursors[editor->cursor_count].display_col = col;
+    editor->cursors[editor->cursor_count].line = line;
+    editor->cursor_count++;
+    
+    InvalidateRect(editor->hwnd, NULL, FALSE);
+}
+
+void editor_add_cursor_at_line(Editor *editor, int line, int col) {
+    if (editor->cursor_count >= MAX_CURSORS) return;
+    
+    TextPos pos = buffer_linecol_to_pos(&editor->buffer, (LineCol){line, col});
+    if (pos > editor->buffer.size) pos = editor->buffer.size;
+    
+    for (int i = 0; i < editor->cursor_count; i++) {
+        if (editor->cursors[i].position == pos) return;
+    }
+    
+    editor->cursors[editor->cursor_count].position = pos;
+    editor->cursors[editor->cursor_count].display_col = col;
+    editor->cursors[editor->cursor_count].line = line;
+    editor->cursor_count++;
+    
+    InvalidateRect(editor->hwnd, NULL, FALSE);
+}
+
+void editor_select_next_occurrence(Editor *editor) {
+    // Get current word at caret
+    LineCol lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
+    TextPos line_start = buffer_line_start(&editor->buffer, lc.line);
+    TextPos line_end = buffer_line_end(&editor->buffer, lc.line);
+    
+    // Find word boundaries
+    TextPos pos = editor->caret;
+    
+    // Find start of word
+    while (pos > line_start) {
+        char c = buffer_get_char(&editor->buffer, pos - 1);
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') break;
+        pos--;
+    }
+    TextPos word_start = pos;
+    
+    // Find end of word
+    pos = editor->caret;
+    while (pos < line_end) {
+        char c = buffer_get_char(&editor->buffer, pos);
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') break;
+        pos++;
+    }
+    TextPos word_end = pos;
+    
+    if (word_end <= word_start) return;
+    
+    // Get word text
+    int word_len = (int)(word_end - word_start);
+    char *word = buffer_get_text(&editor->buffer, word_start, word_end);
+    if (!word || word_len <= 0) return;
+    
+    // Search for next occurrence
+    TextPos search_start = editor->caret + 1;
+    TextPos found_pos = -1;
+    
+    for (TextPos p = search_start; p < editor->buffer.size - word_len + 1; p++) {
+        bool match = true;
+        for (int i = 0; i < word_len; i++) {
+            if (buffer_get_char(&editor->buffer, p + i) != word[i]) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            found_pos = p;
+            break;
+        }
+    }
+    
+    free(word);
+    
+    if (found_pos != -1) {
+        LineCol found_lc = buffer_pos_to_linecol(&editor->buffer, found_pos);
+        editor_add_cursor_at_line(editor, found_lc.line, found_lc.col);
+    }
+}
+
+void editor_remove_cursor(Editor *editor, int index) {
+    if (index < 0 || index >= editor->cursor_count) return;
+    
+    for (int i = index; i < editor->cursor_count - 1; i++) {
+        editor->cursors[i] = editor->cursors[i + 1];
+    }
+    editor->cursor_count--;
+    
+    InvalidateRect(editor->hwnd, NULL, FALSE);
+}
+
+void editor_clear_extra_cursors(Editor *editor) {
+    editor->cursor_count = 0;
+    InvalidateRect(editor->hwnd, NULL, FALSE);
+}
+
+bool editor_has_multiple_cursors(Editor *editor) {
+    return editor->cursor_count > 0;
+}
+
+// ============================================================================
+// Column Selection Mode
+// ============================================================================
+
+void editor_start_column_selection(Editor *editor, int x, int y) {
+    if (x < RENDER_MARGIN_WIDTH) return;
+    
+    int adj_x = x - RENDER_MARGIN_WIDTH;
+    int line = render_y_to_line(editor, y);
+    int col = adj_x / editor->viewport.char_width + editor->viewport.scroll_x;
+    
+    TextPos pos = buffer_linecol_to_pos(&editor->buffer, (LineCol){line, col});
+    if (pos > editor->buffer.size) pos = editor->buffer.size;
+    
+    editor->col_selection.active = true;
+    editor->col_selection.start = pos;
+    editor->col_selection.end = pos;
+    editor->col_selection.start_col = col;
+    editor->col_selection.end_col = col;
+}
+
+void editor_update_column_selection(Editor *editor, int x, int y) {
+    if (!editor->col_selection.active) return;
+    
+    int adj_x = x - RENDER_MARGIN_WIDTH;
+    int line = render_y_to_line(editor, y);
+    int col = adj_x / editor->viewport.char_width + editor->viewport.scroll_x;
+    
+    TextPos pos = buffer_linecol_to_pos(&editor->buffer, (LineCol){line, col});
+    if (pos > editor->buffer.size) pos = editor->buffer.size;
+    
+    editor->col_selection.end = pos;
+    editor->col_selection.end_col = col;
+    
+    InvalidateRect(editor->hwnd, NULL, FALSE);
+}
+
+void editor_end_column_selection(Editor *editor) {
+    editor->col_selection.active = false;
+}
+
+bool editor_is_column_selection_active(Editor *editor) {
+    return editor->col_selection.active;
+}
+
+// ============================================================================
+// Bracket Pair Highlighting
+// ============================================================================
+
+static int get_bracket_type(char c) {
+    switch (c) {
+        case '(': case ')': return 1;
+        case '{': case '}': return 2;
+        case '[': case ']': return 3;
+        case '<': case '>': return 4;
+        case '"': return 5;
+        case '\'': return 6;
+        default: return 0;
+    }
+}
+
+static char get_matching_bracket(char bracket) {
+    switch (bracket) {
+        case '(': return ')';
+        case ')': return '(';
+        case '{': return '}';
+        case '}': return '{';
+        case '[': return ']';
+        case ']': return '[';
+        case '<': return '>';
+        case '>': return '<';
+        case '"': return '"';
+        case '\'': return '\'';
+        default: return '\0';
+    }
+}
+
+void editor_update_bracket_match(Editor *editor) {
+    editor->bracket_match = -1;
+    editor->bracket_type = 0;
+    
+    if (editor->caret <= 0 || editor->caret >= editor->buffer.size) return;
+    
+    char c = buffer_get_char(&editor->buffer, editor->caret);
+    char prev_c = buffer_get_char(&editor->buffer, editor->caret - 1);
+    
+    int type = get_bracket_type(c);
+    int prev_type = get_bracket_type(prev_c);
+    
+    if (type == 0 && prev_type == 0) return;
+    
+    // Determine which bracket to check (prefer char before caret for opening)
+    char bracket = '\0';
+    bool is_opening = false;
+    
+    if (prev_type != 0 && prev_c != c) {
+        // Use previous character as it might be an opening bracket
+        bracket = prev_c;
+        is_opening = (prev_c == '(' || prev_c == '{' || prev_c == '[' || prev_c == '<');
+    } else if (type != 0) {
+        bracket = c;
+        is_opening = (c == '(' || c == '{' || c == '[' || c == '<');
+    }
+    
+    if (bracket == '\0') return;
+    
+    editor->bracket_type = get_bracket_type(bracket);
+    char match = get_matching_bracket(bracket);
+    
+    // Search for matching bracket
+    int depth = 1;
+    TextPos start = is_opening ? editor->caret : editor->caret - 1;
+    TextPos dir = is_opening ? 1 : -1;
+    
+    for (TextPos p = start + dir; p >= 0 && p < editor->buffer.size; p += dir) {
+        char pc = buffer_get_char(&editor->buffer, p);
+        
+        if (pc == bracket) {
+            depth++;
+        } else if (pc == match) {
+            depth--;
+            if (depth == 0) {
+                editor->bracket_match = p;
+                return;
+            }
+        }
+    }
+}
+
+TextPos editor_get_bracket_match(Editor *editor) {
+    return editor->bracket_match;
+}
+
+int editor_get_bracket_type(Editor *editor) {
+    return editor->bracket_type;
+}
+
+// ============================================================================
+// Code Folding
+// ============================================================================
+
+void editor_detect_folds(Editor *editor) {
+    editor->fold_count = 0;
+    
+    int line_count = buffer_line_count(&editor->buffer);
+    
+    for (int line = 0; line < line_count - 1 && editor->fold_count < MAX_FOLDS; line++) {
+        TextPos line_start = buffer_line_start(&editor->buffer, line);
+        TextPos line_end = buffer_line_end(&editor->buffer, line);
+        int line_len = (int)(line_end - line_start);
+        
+        if (line_len <= 0) continue;
+        
+        char *line_text = buffer_get_text(&editor->buffer, line_start, line_end);
+        if (!line_text) continue;
+        
+        // Skip leading whitespace
+        int i = 0;
+        while (i < line_len && (line_text[i] == ' ' || line_text[i] == '\t')) i++;
+        
+        if (i >= line_len) {
+            free(line_text);
+            continue;
+        }
+        
+        // Detect foldable regions
+        bool is_foldable = false;
+        char fold_type = '\0';
+        int start_line = line;
+        int end_line = line;
+        
+        // Check for JSON objects/arrays
+        if (line_text[i] == '{' || line_text[i] == '[') {
+            char open = line_text[i];
+            char close = (open == '{') ? '}' : ']';
+            int depth = 1;
+            
+            for (int search_line = line + 1; search_line < line_count && editor->fold_count < MAX_FOLDS; search_line++) {
+                TextPos sl_start = buffer_line_start(&editor->buffer, search_line);
+                TextPos sl_end = buffer_line_end(&editor->buffer, search_line);
+                char *sl_text = buffer_get_text(&editor->buffer, sl_start, sl_end);
+                
+                if (sl_text) {
+                    for (int j = 0; j < (int)(sl_end - sl_start); j++) {
+                        if (sl_text[j] == open) depth++;
+                        else if (sl_text[j] == close) depth--;
+                        
+                        if (depth == 0) {
+                            end_line = search_line;
+                            is_foldable = true;
+                            fold_type = 'j';
+                            free(sl_text);
+                            break;
+                        }
+                    }
+                    free(sl_text);
+                }
+                
+                if (depth == 0) break;
+            }
+        }
+        // Check for markdown headers
+        else if (line_text[i] == '#') {
+            int level = 0;
+            while (i < line_len && line_text[i] == '#' && level < 6) {
+                level++;
+                i++;
+            }
+            
+            if (level > 0 && level < 6) {
+                // Find next heading of same or higher level
+                for (int search_line = line + 1; search_line < line_count; search_line++) {
+                    TextPos sl_start = buffer_line_start(&editor->buffer, search_line);
+                    TextPos sl_end = buffer_line_end(&editor->buffer, search_line);
+                    char *sl_text = buffer_get_text(&editor->buffer, sl_start, sl_end);
+                    
+                    if (sl_text) {
+                        int si = 0;
+                        while (si < (int)(sl_end - sl_start) && (sl_text[si] == ' ' || sl_text[si] == '\t')) si++;
+                        
+                        if (si < (int)(sl_end - sl_start) && sl_text[si] == '#') {
+                            int next_level = 0;
+                            int si2 = si;
+                            while (si2 < (int)(sl_end - sl_start) && sl_text[si2] == '#' && next_level < 6) {
+                                next_level++;
+                                si2++;
+                            }
+                            
+                            if (next_level <= level) {
+                                end_line = search_line - 1;
+                                is_foldable = true;
+                                fold_type = 'm';
+                                free(sl_text);
+                                break;
+                            }
+                        }
+                        free(sl_text);
+                    }
+                }
+            }
+        }
+        // Check for code blocks (braces)
+        else if (line_text[i] == '{') {
+            int depth = 1;
+            for (int search_line = line + 1; search_line < line_count && editor->fold_count < MAX_FOLDS; search_line++) {
+                TextPos sl_start = buffer_line_start(&editor->buffer, search_line);
+                TextPos sl_end = buffer_line_end(&editor->buffer, search_line);
+                char *sl_text = buffer_get_text(&editor->buffer, sl_start, sl_end);
+                
+                if (sl_text) {
+                    // Skip leading whitespace
+                    int si = 0;
+                    while (si < (int)(sl_end - sl_start) && (sl_text[si] == ' ' || sl_text[si] == '\t')) si++;
+                    
+                    for (int j = si; j < (int)(sl_end - sl_start); j++) {
+                        if (sl_text[j] == '{') depth++;
+                        else if (sl_text[j] == '}') depth--;
+                        
+                        if (depth == 0) {
+                            end_line = search_line;
+                            is_foldable = true;
+                            fold_type = 'c';
+                            free(sl_text);
+                            break;
+                        }
+                    }
+                    free(sl_text);
+                }
+                
+                if (depth == 0) break;
+            }
+        }
+        
+        if (is_foldable && end_line > start_line + 1) {
+            editor->folds[editor->fold_count].start_line = start_line;
+            editor->folds[editor->fold_count].end_line = end_line;
+            editor->folds[editor->fold_count].collapsed = false;
+            editor->folds[editor->fold_count].type = fold_type;
+            editor->fold_count++;
+        }
+        
+        free(line_text);
+    }
+}
+
+void editor_toggle_fold(Editor *editor, int line) {
+    for (int i = 0; i < editor->fold_count; i++) {
+        if (editor->folds[i].start_line == line) {
+            editor->folds[i].collapsed = !editor->folds[i].collapsed;
+            InvalidateRect(editor->hwnd, NULL, FALSE);
+            return;
+        }
+        // Also toggle if line is within the fold region
+        if (line > editor->folds[i].start_line && line <= editor->folds[i].end_line) {
+            editor->folds[i].collapsed = !editor->folds[i].collapsed;
+            InvalidateRect(editor->hwnd, NULL, FALSE);
+            return;
+        }
+    }
+}
+
+bool editor_is_line_folded(Editor *editor, int line) {
+    for (int i = 0; i < editor->fold_count; i++) {
+        if (line >= editor->folds[i].start_line && line <= editor->folds[i].end_line) {
+            return editor->folds[i].collapsed;
+        }
+    }
+    return false;
+}
+
+int editor_get_fold_end_line(Editor *editor, int line) {
+    for (int i = 0; i < editor->fold_count; i++) {
+        if (line >= editor->folds[i].start_line && line <= editor->folds[i].end_line) {
+            return editor->folds[i].collapsed ? editor->folds[i].start_line : -1;
+        }
+    }
+    return -1;
+}
+
+// ============================================================================
+// Auto-Complete
+// ============================================================================
+
+void editor_update_autocomplete(Editor *editor) {
+    editor->autocomplete.count = 0;
+    
+    // Only trigger after 3+ characters typed
+    LineCol lc = buffer_pos_to_linecol(&editor->buffer, editor->caret);
+    if (lc.col < 3) return;
+    
+    // Get current word
+    TextPos line_start = buffer_line_start(&editor->buffer, lc.line);
+    TextPos word_start = editor->caret;
+    
+    while (word_start > line_start) {
+        char c = buffer_get_char(&editor->buffer, word_start - 1);
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') break;
+        word_start--;
+    }
+    
+    int prefix_len = (int)(editor->caret - word_start);
+    if (prefix_len < 3) return;
+    
+    // Collect words from document
+    char **words = (char **)malloc(sizeof(char *) * MAX_AUTOCOMPLETE_WORDS);
+    int word_count = 0;
+    
+    for (TextPos p = 0; p < editor->buffer.size && word_count < MAX_AUTOCOMPLETE_WORDS - 1; p++) {
+        // Skip whitespace
+        while (p < editor->buffer.size) {
+            char c = buffer_get_char(&editor->buffer, p);
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') p++;
+            else break;
+        }
+        
+        if (p >= editor->buffer.size) break;
+        
+        // Collect word
+        TextPos w_start = p;
+        while (p < editor->buffer.size) {
+            char c = buffer_get_char(&editor->buffer, p);
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') break;
+            p++;
+        }
+        int w_len = (int)(p - w_start);
+        
+        if (w_len >= 3) {
+            char *word = buffer_get_text(&editor->buffer, w_start, p);
+            if (word) {
+                // Check if word starts with prefix
+                bool match = true;
+                for (int i = 0; i < prefix_len && word[i]; i++) {
+                    if (word[i] != buffer_get_char(&editor->buffer, word_start + i)) {
+                        match = false;
+                        break;
+                    }
+                }
+                
+                if (match) {
+                    // Check if we already have this word
+                    bool exists = false;
+                    for (int i = 0; i < word_count; i++) {
+                        if (strcmp(words[i], word) == 0) {
+                            exists = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!exists && word_count < MAX_AUTOCOMPLETE_WORDS) {
+                        words[word_count] = word;
+                        word_count++;
+                    } else {
+                        free(word);
+                    }
+                } else {
+                    free(word);
+                }
+            }
+        }
+    }
+    
+    // Copy to autocomplete structure (limit to MAX_SUGGESTIONS)
+    editor->autocomplete.count = (word_count > MAX_SUGGESTIONS) ? MAX_SUGGESTIONS : word_count;
+    editor->autocomplete.selected_index = 0;
+    editor->autocomplete.trigger_pos = editor->caret - prefix_len;
+    
+    for (int i = 0; i < editor->autocomplete.count; i++) {
+        strncpy(editor->autocomplete.words[i].word, words[i], 63);
+        editor->autocomplete.words[i].word[63] = '\0';
+        editor->autocomplete.words[i].frequency = 1;
+        free(words[i]);
+    }
+    
+    free(words);
+}
+
+void editor_show_autocomplete(Editor *editor) {
+    if (editor->autocomplete.count > 0) {
+        editor->autocomplete.visible = true;
+    }
+}
+
+void editor_hide_autocomplete(Editor *editor) {
+    editor->autocomplete.visible = false;
+}
+
+bool editor_autocomplete_is_visible(Editor *editor) {
+    return editor->autocomplete.visible;
+}
+
+void editor_autocomplete_select(Editor *editor, int index) {
+    if (index >= 0 && index < editor->autocomplete.count) {
+        editor->autocomplete.selected_index = index;
+    }
+}
+
+void editor_autocomplete_nav_next(Editor *editor) {
+    if (editor->autocomplete.count > 0) {
+        editor->autocomplete.selected_index++;
+        if (editor->autocomplete.selected_index >= editor->autocomplete.count) {
+            editor->autocomplete.selected_index = 0;
+        }
+    }
+}
+
+void editor_autocomplete_nav_prev(Editor *editor) {
+    if (editor->autocomplete.count > 0) {
+        editor->autocomplete.selected_index--;
+        if (editor->autocomplete.selected_index < 0) {
+            editor->autocomplete.selected_index = editor->autocomplete.count - 1;
+        }
+    }
+}
+
+const char* editor_autocomplete_get_selected(Editor *editor) {
+    if (editor->autocomplete.selected_index >= 0 && 
+        editor->autocomplete.selected_index < editor->autocomplete.count) {
+        return editor->autocomplete.words[editor->autocomplete.selected_index].word;
+    }
+    return NULL;
+}
+
+// ============================================================================
+// Bracket Auto-Close
+// ============================================================================
+
+void editor_auto_close_bracket(Editor *editor, char bracket) {
+    char pair[2] = {'\0', '\0'};
+    
+    switch (bracket) {
+        case '(': strcpy(pair, ")"); break;
+        case '{': strcpy(pair, "}"); break;
+        case '[': strcpy(pair, "]"); break;
+        case '<': strcpy(pair, ">"); break;
+        case '"': strcpy(pair, "\""); break;
+        case '\'': strcpy(pair, "'"); break;
+        default: return;
+    }
+    
+    // Insert closing bracket
+    if (buffer_insert(&editor->buffer, editor->caret, pair, 1)) {
+        editor_add_undo_op(editor, OP_INSERT, editor->caret, pair, 1);
+        editor->caret++;
+    }
 }

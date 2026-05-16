@@ -3,6 +3,14 @@
 
 #include "core_types.h"
 #include "theme.h"
+#include "workspace.h"
+#include "explorer.h"
+#include "globalsearch.h"
+#include "notes.h"
+#include "template.h"
+#include "snippet.h"
+#include "clipboard.h"
+#include "taskmode.h"
 #include <windows.h>
 
 // Maximum recent files
@@ -73,6 +81,21 @@ typedef struct {
     // Encoding and line ending settings (per-tab)
     EncodingType encoding;       // File encoding for this tab
     LineEndingType line_ending; // Line ending style for this tab
+    // Multi-cursor editing
+    MultiCursor cursors[MAX_CURSORS];
+    int cursor_count;
+    // Column selection mode
+    ColumnSelection col_selection;
+    // Bracket pair highlighting
+    TextPos bracket_match;   // Position of matching bracket (-1 if none)
+    int bracket_type;        // Type of bracket at caret (0=none, 1=(), 2={}, 3=[], 4=<>, 5="", 6='')
+    // Code folding
+    FoldRegion folds[MAX_FOLDS];
+    int fold_count;
+    // Auto-complete
+    Autocomplete autocomplete;
+    // Bracket auto-close enabled
+    bool auto_close_brackets;
 } Editor;
 
 // Maximum number of tabs
@@ -206,6 +229,21 @@ typedef struct {
     char backup_dir[MAX_PATH];   // Backup directory path
     // Plugin system
     bool plugins_enabled;       // Enable plugin system
+    // Workspace & Explorer
+    WorkspaceManager workspace_mgr;
+    Explorer explorer;
+    GlobalSearch globalsearch;
+    bool show_explorer;         // Show/hide sidebar
+    int sidebar_width;          // Sidebar width in pixels
+    // Phase 7: Notes, Templates, Snippets, Clipboard, Task mode
+    NotesManager notes_mgr;
+    TemplateManager template_mgr;
+    SnippetManager snippet_mgr;
+    ClipboardHistory clipboard_hist;
+    TaskManager task_mgr;
+    // Phase 8: Power User features
+    bool file_watch_enabled;     // Enable file watcher
+    bool read_only_mode;         // Read-only mode toggle
 } App;
 
 // Global app instance

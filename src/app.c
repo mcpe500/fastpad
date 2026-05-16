@@ -11,6 +11,16 @@
 #include "backup.h"
 #include "plugin.h"
 #include "settings.h"
+#include "workspace.h"
+#include "explorer.h"
+#include "globalsearch.h"
+#include "notes.h"
+#include "template.h"
+#include "snippet.h"
+#include "clipboard.h"
+#include "taskmode.h"
+#include "filewatch.h"
+#include "cli.h"
 #include <commctrl.h>
 #include <shlobj.h>
 #include <stdio.h>
@@ -20,6 +30,10 @@
 static void app_update_recent_menu(App *app);
 static void recent_files_save(App *app);
 void app_apply_theme(const Theme *theme);
+void app_new_from_template(App *app);
+void app_show_notes(App *app);
+void app_show_clipboard_history(App *app);
+void app_toggle_task_mode(App *app);
 
 #define IDC_EDIT 1001
 #define IDC_BUTTON_FIND 1002
@@ -74,6 +88,27 @@ void app_apply_theme(const Theme *theme);
 #define ID_THEME_SOLARIZED_LIGHT 4084
 #define ID_THEME_SOLARIZED_DARK  4085
 #define ID_THEME_DRACULA        4086
+// Notes, Snippets, Templates, Clipboard, TaskMode
+#define ID_FILE_NEW_FROM_TEMPLATE 4100
+#define ID_NOTES_VIEW 4101
+#define ID_NOTES_NEW 4102
+#define ID_NOTES_SAVE 4103
+#define ID_SNIPPETS_VIEW 4110
+#define ID_SNIPPETS_MANAGE 4111
+#define ID_CLIPBOARD_HISTORY 4120
+#define ID_TASK_MODE 4130
+#define ID_TASK_MODE_TOGGLE 4131
+
+// Workspace & Explorer
+#define ID_FILE_OPEN_FOLDER     4090
+#define ID_FILE_CLOSE_WORKSPACE 4091
+#define ID_VIEW_EXPLORER        4092
+#define ID_SEARCH_GLOBAL        4093
+#define ID_EXPLORER_FILE_OPEN   4094
+#define ID_GLOBALSEARCH_COMPLETE 4095
+// Phase 8: Power User
+#define ID_TOOLS_COMPARE_FILES   4096
+#define ID_VIEW_READONLY        4097
 
 App g_app;
 
@@ -115,6 +150,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             
             app->show_statusbar = true;
             app->word_wrap = false;
+            app->show_explorer = false;
+            app->sidebar_width = 250;
+            
+            // Initialize workspace and explorer
+            workspace_init(&app->workspace_mgr, hwnd);
+            explorer_init(&app->explorer, hwnd);
+            globalsearch_init(&app->globalsearch, hwnd);
             
             tab_manager_update_window_title(&app->tab_mgr, hwnd);
             break;
@@ -194,11 +236,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     tab_manager_on_tab_click(&app->tab_mgr, sel);
                 }
             }
+            // Handle explorer tree notifications
+            else if (nmhdr->hwndFrom == app->explorer.tree_view) {
+                explorer_on_notify(&app->explorer, lParam);
+            }
             break;
         }
             
         case WM_COMMAND: {
-            app_on_command(app, wParam);
+            app_on_command(app, wParam, lParam);
             break;
         }
             
@@ -218,6 +264,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     editor_save_history(&tab->editor, tab->filename);
                 }
             }
+            
+            // Free workspace and explorer resources
+            workspace_free(&app->workspace_mgr);
+            explorer_free(&app->explorer);
+            globalsearch_free(&app->globalsearch);
+            
+            // Free Phase 7 productivity feature resources
+            notes_free(&app->notes_mgr);
+            template_free(&app->template_mgr);
+            snippet_free(&app->snippet_mgr);
+            clipboard_free(&app->clipboard_hist);
+            task_free(&app->task_mgr);
             
             // Don't close tabs one-by-one, just free resources directly
             tab_manager_free(&app->tab_mgr);
@@ -269,6 +327,17 @@ bool app_init(App *app, HINSTANCE hInstance) {
             app->auto_save_dir[0] = '\0';
         }
     }
+
+    // Initialize Phase 7 productivity features
+    notes_init(&app->notes_mgr, NULL);
+    template_init(&app->template_mgr, NULL);
+    snippet_init(&app->snippet_mgr, NULL);
+    clipboard_init(&app->clipboard_hist);
+    task_init(&app->task_mgr, NULL);
+
+    // Initialize Phase 8 file watcher
+    filewatch_init();
+    app->file_watch_enabled = true;
 
     // Initialize common controls for status bar and tab control
     INITCOMMONCONTROLSEX icex = {0};
@@ -329,8 +398,11 @@ HWND app_create_window(App *app, HINSTANCE hInstance) {
     AppendMenuA(file_menu, MF_STRING, ID_FILE_CLOSE_TAB, "&Close Tab\tCtrl+W");
     AppendMenuA(file_menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(file_menu, MF_STRING, ID_FILE_OPEN, "&Open...\tCtrl+O");
+    AppendMenuA(file_menu, MF_STRING, ID_FILE_OPEN_FOLDER, "Open &Folder...\tCtrl+Shift+O");
+    AppendMenuA(file_menu, MF_STRING, ID_FILE_CLOSE_WORKSPACE, "Close Wor&kspace");
     AppendMenuA(file_menu, MF_STRING, ID_FILE_SAVE, "&Save\tCtrl+S");
     AppendMenuA(file_menu, MF_STRING, ID_FILE_SAVEAS, "Save &As...\tCtrl+Shift+S");
+    AppendMenuA(file_menu, MF_STRING, ID_FILE_NEW_FROM_TEMPLATE, "New From &Template...\tCtrl+Shift+N");
     AppendMenuA(file_menu, MF_SEPARATOR, 0, NULL);
     // Recent files submenu
     HMENU recent_menu = CreatePopupMenu();
@@ -364,12 +436,15 @@ HWND app_create_window(App *app, HINSTANCE hInstance) {
     AppendMenuA(edit_menu, MF_STRING, ID_EDIT_CUT, "Cu&t\tCtrl+X");
     AppendMenuA(edit_menu, MF_STRING, ID_EDIT_COPY, "&Copy\tCtrl+C");
     AppendMenuA(edit_menu, MF_STRING, ID_EDIT_PASTE, "&Paste\tCtrl+V");
+    AppendMenuA(edit_menu, MF_STRING, ID_CLIPBOARD_HISTORY, "Clipboard &History\tCtrl+Shift+V");
     AppendMenuA(edit_menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(edit_menu, MF_STRING, ID_EDIT_SELECTALL, "Select &All\tCtrl+A");
     AppendMenuA(edit_menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(edit_menu, MF_STRING, ID_EDIT_FIND, "&Find...\tCtrl+F");
     AppendMenuA(edit_menu, MF_STRING, ID_EDIT_FINDNEXT, "Find &Next\tF3");
     AppendMenuA(edit_menu, MF_STRING, ID_EDIT_REPLACE, "&Replace...\tCtrl+H");
+    AppendMenuA(edit_menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(edit_menu, MF_STRING, ID_SEARCH_GLOBAL, "Search in &Workspace...\tCtrl+Shift+F");
     AppendMenuA(app->menu, MF_POPUP, (UINT_PTR)edit_menu, "&Edit");
 
     // Tools menu
@@ -384,6 +459,8 @@ HWND app_create_window(App *app, HINSTANCE hInstance) {
     AppendMenuA(backup_menu, MF_STRING, ID_TOOLS_BACKUP_RESTORE, "&Restore from Backup...");
     AppendMenuA(tools_menu, MF_POPUP, (UINT_PTR)backup_menu, "&Backup");
     AppendMenuA(tools_menu, MF_STRING, ID_TOOLS_PLUGINS, "&Plugins...");
+    AppendMenuA(tools_menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(tools_menu, MF_STRING, ID_TOOLS_COMPARE_FILES, "&Compare Files...");
     AppendMenuA(app->menu, MF_POPUP, (UINT_PTR)tools_menu, "&Tools");
     
     // View menu
@@ -396,6 +473,16 @@ HWND app_create_window(App *app, HINSTANCE hInstance) {
                 ID_VIEW_LINENUMBERS, "&Line Numbers");
     AppendMenuA(view_menu, MF_STRING | (app->highlight_enabled ? MF_CHECKED : MF_UNCHECKED),
                 ID_VIEW_HIGHLIGHT, "Syntax &Highlight");
+    AppendMenuA(view_menu, MF_STRING | (app->show_explorer ? MF_CHECKED : MF_UNCHECKED),
+                ID_VIEW_EXPLORER, "&Explorer Sidebar");
+    AppendMenuA(view_menu, MF_SEPARATOR, 0, NULL);
+    // Notes submenu
+    HMENU notes_menu = CreatePopupMenu();
+    AppendMenuA(notes_menu, MF_STRING, ID_NOTES_NEW, "&New Quick Note\tCtrl+Shift+N");
+    AppendMenuA(notes_menu, MF_STRING, ID_NOTES_VIEW, "&View Notes");
+    AppendMenuA(notes_menu, MF_STRING, ID_NOTES_SAVE, "&Save Notes");
+    AppendMenuA(view_menu, MF_POPUP, (UINT_PTR)notes_menu, "&Notes");
+    AppendMenuA(view_menu, MF_STRING | MF_UNCHECKED, ID_TASK_MODE_TOGGLE, "&Task Mode");
     AppendMenuA(view_menu, MF_SEPARATOR, 0, NULL);
     // Zoom submenu
     HMENU zoom_menu = CreatePopupMenu();
@@ -410,6 +497,8 @@ HWND app_create_window(App *app, HINSTANCE hInstance) {
     AppendMenuA(split_menu, MF_STRING, ID_VIEW_SPLIT_VERT, "Split &Vertical");
     AppendMenuA(split_menu, MF_STRING, ID_VIEW_CLOSE_SPLIT, "&Close Split\tCtrl+W");
     AppendMenuA(view_menu, MF_POPUP, (UINT_PTR)split_menu, "&Split View");
+    AppendMenuA(view_menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(view_menu, MF_STRING | MF_UNCHECKED, ID_VIEW_READONLY, "&Read-Only Mode\tCtrl+R");
     AppendMenuA(app->menu, MF_POPUP, (UINT_PTR)view_menu, "&View");
     
     // Settings menu
@@ -501,7 +590,12 @@ void app_file_open(App *app) {
         
         // Load persistent history for this file
         editor_load_history(&tab->editor, filename);
-        
+
+        // Start file watcher for this file
+        if (app->file_watch_enabled && strcmp(filename, "Untitled") != 0) {
+            filewatch_start(filename, NULL, NULL);
+        }
+
         InvalidateRect(tab->hwnd, NULL, TRUE);
     }
 }
@@ -577,7 +671,7 @@ bool app_check_unsaved(App *app) {
     return true;
 }
 
-void app_on_command(App *app, WPARAM wParam) {
+void app_on_command(App *app, WPARAM wParam, LPARAM lParam) {
     switch (LOWORD(wParam)) {
         case ID_FILE_NEW:
             app_file_new(app);
@@ -611,6 +705,77 @@ void app_on_command(App *app, WPARAM wParam) {
         case ID_FILE_EXIT:
             app_exit(app);
             break;
+
+        case ID_FILE_OPEN_FOLDER: {
+            if (workspace_open_folder(&app->workspace_mgr)) {
+                const char *root = workspace_get_root(&app->workspace_mgr);
+                if (root) {
+                    explorer_open_folder(&app->explorer, root);
+                    app->show_explorer = true;
+                    CheckMenuItem(app->menu, ID_VIEW_EXPLORER, MF_CHECKED);
+                    InvalidateRect(app->hwnd, NULL, TRUE);
+                }
+            }
+            break;
+        }
+
+        case ID_FILE_CLOSE_WORKSPACE: {
+            workspace_close(&app->workspace_mgr);
+            explorer_close(&app->explorer);
+            app->show_explorer = false;
+            CheckMenuItem(app->menu, ID_VIEW_EXPLORER, MF_UNCHECKED);
+            InvalidateRect(app->hwnd, NULL, TRUE);
+            break;
+        }
+
+        case ID_VIEW_EXPLORER: {
+            app->show_explorer = !app->show_explorer;
+            CheckMenuItem(app->menu, ID_VIEW_EXPLORER,
+                         app->show_explorer ? MF_CHECKED : MF_UNCHECKED);
+            InvalidateRect(app->hwnd, NULL, TRUE);
+            break;
+        }
+
+        case ID_SEARCH_GLOBAL: {
+            if (workspace_is_open(&app->workspace_mgr)) {
+                globalsearch_show(&app->globalsearch, workspace_get_root(&app->workspace_mgr));
+            } else {
+                MessageBoxA(app->hwnd, "Please open a workspace folder first.", "Global Search", MB_ICONINFORMATION);
+            }
+            break;
+        }
+
+        case ID_EXPLORER_FILE_OPEN: {
+            // Open file from explorer
+            char *filepath = (char*)lParam;
+            if (filepath) {
+                // Load file into new tab
+                Tab *tab = tab_manager_get_active(&app->tab_mgr);
+                if (tab && tab->editor.modified) {
+                    if (!app_check_unsaved(app)) {
+                        free(filepath);
+                        break;
+                    }
+                }
+                
+                if (file_load(app->hwnd, filepath, &tab->editor.buffer)) {
+                    tab_manager_set_tab_filename(&app->tab_mgr, app->tab_mgr.active_index, filepath);
+                    tab->editor.caret = 0;
+                    tab->editor.selection.start = 0;
+                    tab->editor.selection.end = 0;
+                    tab->editor.modified = false;
+                    InvalidateRect(tab->hwnd, NULL, TRUE);
+                }
+                free(filepath);
+            }
+            break;
+        }
+
+        case ID_GLOBALSEARCH_COMPLETE: {
+            // Search completed, update results display
+            // This would update a search results window if we had one
+            break;
+        }
 
         case ID_EDIT_UNDO: {
             Tab *tab = tab_manager_get_active(&app->tab_mgr);
@@ -670,6 +835,57 @@ void app_on_command(App *app, WPARAM wParam) {
             break;
         }
             
+        // Phase 7: Productivity features
+        case ID_FILE_NEW_FROM_TEMPLATE: {
+            app_new_from_template(app);
+            break;
+        }
+        
+        case ID_NOTES_NEW: {
+            notes_add(&app->notes_mgr, "Quick Note", "");
+            break;
+        }
+        
+        case ID_NOTES_VIEW: {
+            // Show all notes - just display count for now
+            char msg[128];
+            snprintf(msg, sizeof(msg), "You have %d notes.", app->notes_mgr.count);
+            MessageBoxA(app->hwnd, msg, "Notes", MB_ICONINFORMATION);
+            break;
+        }
+        
+        case ID_NOTES_SAVE: {
+            notes_save(&app->notes_mgr);
+            break;
+        }
+        
+        case ID_CLIPBOARD_HISTORY: {
+            {
+                char info[512] = "Clipboard History:\n\n";
+                char line[128];
+                int count = clipboard_get_count(&app->clipboard_hist);
+                for (int i = 0; i < count && i < 5; i++) {
+                    int len = 0;
+                    const char *item = clipboard_get_item(&app->clipboard_hist, i, &len);
+                    if (item) {
+                        snprintf(line, sizeof(line), "%d. %.40s...\n", i + 1, item);
+                        strncat(info, line, sizeof(info) - strlen(info) - 1);
+                    }
+                }
+                if (count == 0) strcat(info, "(empty)");
+                MessageBoxA(app->hwnd, info, "Clipboard History", MB_ICONINFORMATION);
+            }
+            break;
+        }
+        
+        case ID_TASK_MODE_TOGGLE: {
+            // Toggle task mode - show pending count
+            char msg[128];
+            snprintf(msg, sizeof(msg), "Task mode enabled. %d pending tasks.", task_get_pending_count(&app->task_mgr));
+            MessageBoxA(app->hwnd, msg, "Task Mode", MB_ICONINFORMATION);
+            break;
+        }
+        
         case ID_VIEW_WORDWRAP: {
             app->word_wrap = !app->word_wrap;
             CheckMenuItem(app->menu, ID_VIEW_WORDWRAP,
@@ -718,6 +934,18 @@ void app_on_command(App *app, WPARAM wParam) {
         case ID_VIEW_HIGHLIGHT:
             app_toggle_highlight(app);
             break;
+
+        case ID_VIEW_READONLY: {
+            app->read_only_mode = !app->read_only_mode;
+            CheckMenuItem(app->menu, ID_VIEW_READONLY,
+                         app->read_only_mode ? MF_CHECKED : MF_UNCHECKED);
+            // Update cursor style to indicate read-only
+            Tab *tab = tab_manager_get_active(&app->tab_mgr);
+            if (tab) {
+                InvalidateRect(tab->hwnd, NULL, TRUE);
+            }
+            break;
+        }
 
         case ID_VIEW_SPLIT_HORIZ:
             app_split_toggle(app, SPLIT_HORIZONTAL);
@@ -878,6 +1106,11 @@ void app_on_command(App *app, WPARAM wParam) {
             break;
         }
 
+        case ID_TOOLS_COMPARE_FILES: {
+            MessageBoxA(app->hwnd, "Compare Files feature will be available in a future update.", "Coming Soon", MB_ICONINFORMATION);
+            break;
+        }
+
         case ID_SETTINGS_EXPORT: {
             char filepath[MAX_PATH] = {0};
             // Use save dialog
@@ -1004,8 +1237,18 @@ void app_on_size(App *app, int width, int height) {
         SendMessage(app->statusbar, WM_SIZE, 0, 0);
     }
 
+    // Calculate editor area (accounting for sidebar)
+    int editor_width = width;
+
+    if (app->show_explorer && workspace_is_open(&app->workspace_mgr)) {
+        // Explorer is visible
+        explorer_set_width(&app->explorer, app->sidebar_width);
+        explorer_on_size(&app->explorer, app->sidebar_width, height);
+        editor_width = width - app->sidebar_width;
+    }
+
     // Resize tab bar and active editor
-    tab_manager_resize(&app->tab_mgr, width);
+    tab_manager_resize(&app->tab_mgr, editor_width);
     app_update_statusbar(app);
 }
 
@@ -1041,12 +1284,26 @@ void app_on_char(App *app, WPARAM wParam) {
         return; // Handled by VK_RETURN
     }
     
+    // Auto-close brackets
+    if (tab->editor.auto_close_brackets) {
+        if (ch == '(' || ch == '{' || ch == '[' || ch == '<' || ch == '"' || ch == '\'') {
+            editor_auto_close_bracket(&tab->editor, ch);
+            // After auto-close, the closing bracket is inserted and cursor moved
+            // So we just need to update and return
+            editor_set_modified(&tab->editor, true);
+            editor_scroll_to_caret(&tab->editor);
+            InvalidateRect(app->hwnd, NULL, FALSE);
+            return;
+        }
+    }
+    
     editor_char_input(&tab->editor, ch);
 }
 
 void app_on_keydown(App *app, WPARAM wParam) {
     bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
     Tab *tab = tab_manager_get_active(&app->tab_mgr);
 
     if (ctrl) {
@@ -1109,6 +1366,9 @@ void app_on_keydown(App *app, WPARAM wParam) {
             case 'V': // Ctrl+V - Paste
                 if (tab) editor_paste(&tab->editor);
                 return;
+            case 'D': // Ctrl+D - Select next occurrence (multi-cursor)
+                if (tab) editor_select_next_occurrence(&tab->editor);
+                return;
             case VK_OEM_PLUS: // Ctrl+= (Zoom In)
                 app_handle_zoom(app, 10);
                 return;
@@ -1118,11 +1378,129 @@ void app_on_keydown(App *app, WPARAM wParam) {
             case '0': // Ctrl+0 (Reset Zoom)
                 app_reset_zoom(app);
                 return;
+            case 'R': // Ctrl+R - Read-Only Mode
+                app->read_only_mode = !app->read_only_mode;
+                CheckMenuItem(app->menu, ID_VIEW_READONLY,
+                             app->read_only_mode ? MF_CHECKED : MF_UNCHECKED);
+                if (tab) InvalidateRect(tab->hwnd, NULL, TRUE);
+                return;
+        }
+    }
+    
+    // Ctrl+Shift+N - New From Template (note: also handled in Ctrl+N case when shift is held)
+    if (ctrl && shift && wParam == 'N') {
+        app_new_from_template(app);
+        return;
+    }
+    
+    // Ctrl+Shift+V - Clipboard History
+    if (ctrl && shift && wParam == 'V') {
+        app_show_clipboard_history(app);
+        return;
+    }
+    
+    // Ctrl+Alt+Up/Down for multi-cursor line addition
+    if (ctrl && alt) {
+        if (wParam == VK_UP) {
+            if (tab) {
+                LineCol lc = buffer_pos_to_linecol(&tab->editor.buffer, tab->editor.caret);
+                if (lc.line > 0) {
+                    editor_add_cursor_at_line(&tab->editor, lc.line - 1, lc.col);
+                }
+            }
+            return;
+        }
+        if (wParam == VK_DOWN) {
+            if (tab) {
+                LineCol lc = buffer_pos_to_linecol(&tab->editor.buffer, tab->editor.caret);
+                int total_lines = buffer_line_count(&tab->editor.buffer);
+                if (lc.line < total_lines - 1) {
+                    editor_add_cursor_at_line(&tab->editor, lc.line + 1, lc.col);
+                }
+            }
+            return;
+        }
+    }
+    
+    // Handle autocomplete navigation
+    if (tab && editor_autocomplete_is_visible(&tab->editor)) {
+        if (wParam == VK_UP) {
+            editor_autocomplete_nav_prev(&tab->editor);
+            InvalidateRect(app->hwnd, NULL, FALSE);
+            return;
+        }
+        if (wParam == VK_DOWN) {
+            editor_autocomplete_nav_next(&tab->editor);
+            InvalidateRect(app->hwnd, NULL, FALSE);
+            return;
+        }
+        if (wParam == VK_RETURN) {
+            // Accept autocomplete
+            const char *selected = editor_autocomplete_get_selected(&tab->editor);
+            if (selected) {
+                // Calculate how much to delete and what to insert
+                TextPos trigger = tab->editor.autocomplete.trigger_pos;
+                TextPos caret = tab->editor.caret;
+                int prefix_len = (int)(caret - trigger);
+                
+                // Delete the prefix
+                buffer_delete(&tab->editor.buffer, trigger, prefix_len);
+                tab->editor.caret = trigger;
+                
+                // Insert the selected word
+                int len = (int)strlen(selected);
+                buffer_insert(&tab->editor.buffer, trigger, selected, len);
+                tab->editor.caret = trigger + len;
+                
+                editor_set_modified(&tab->editor, true);
+                
+                editor_hide_autocomplete(&tab->editor);
+                editor_scroll_to_caret(&tab->editor);
+                InvalidateRect(app->hwnd, NULL, FALSE);
+            }
+            return;
+        }
+        if (wParam == VK_ESCAPE) {
+            editor_hide_autocomplete(&tab->editor);
+            InvalidateRect(app->hwnd, NULL, FALSE);
+            return;
+        }
+    }
+    
+    // Escape key - clear multi-cursors
+    if (wParam == VK_ESCAPE) {
+        if (tab) {
+            if (editor_has_multiple_cursors(&tab->editor)) {
+                editor_clear_extra_cursors(&tab->editor);
+                return;
+            }
+            if (editor_is_column_selection_active(&tab->editor)) {
+                editor_end_column_selection(&tab->editor);
+                return;
+            }
+        }
+    }
+    
+    // Arrow keys - clear multi-cursors when navigating
+    if (wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_UP || wParam == VK_DOWN) {
+        if (tab && editor_has_multiple_cursors(&tab->editor)) {
+            editor_clear_extra_cursors(&tab->editor);
         }
     }
     
     if (tab) {
         editor_key_down(&tab->editor, (int)wParam);
+        
+        // Update bracket match after navigation
+        editor_update_bracket_match(&tab->editor);
+        
+        // Update autocomplete on typing
+        if (!ctrl && !alt && wParam != VK_ESCAPE && wParam != VK_UP && wParam != VK_DOWN && wParam != VK_RETURN) {
+            editor_update_autocomplete(&tab->editor);
+            if (tab->editor.autocomplete.count >= 3) {
+                editor_show_autocomplete(&tab->editor);
+            }
+        }
     }
 }
 
@@ -1135,6 +1513,21 @@ void app_on_lbuttondown(App *app, int x, int y, bool shift) {
     
     // Adjust y for tab bar
     y -= app->tab_mgr.height;
+    
+    bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+    
+    // Alt+Click = add cursor at position
+    if (alt && !shift) {
+        editor_add_cursor(&tab->editor, x, y);
+        return;
+    }
+    
+    // Alt+drag = column selection
+    if (alt && shift) {
+        editor_start_column_selection(&tab->editor, x, y);
+        SetCapture(app->hwnd);
+        return;
+    }
     
     editor_mouse_click(&tab->editor, x, y, shift);
 }
@@ -1149,13 +1542,26 @@ void app_on_mousemove(App *app, int x, int y, bool dragging) {
     // Adjust y for tab bar
     y -= app->tab_mgr.height;
     
+    // Handle column selection dragging
+    if (dragging && editor_is_column_selection_active(&tab->editor)) {
+        editor_update_column_selection(&tab->editor, x, y);
+        return;
+    }
+    
     if (dragging) {
         editor_mouse_drag(&tab->editor, x, y);
     }
 }
 
 void app_on_lbuttonup(App *app) {
-    (void)app;
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    
+    // End column selection if active
+    if (tab && editor_is_column_selection_active(&tab->editor)) {
+        editor_end_column_selection(&tab->editor);
+        return;
+    }
+    
     // Selection dragging handled by mouse move
 }
 
@@ -1421,8 +1827,13 @@ void app_restore_session(App *app) {
 }
 
 void app_on_idle(App *app) {
+    // Poll file watcher for external changes
+    if (app->file_watch_enabled) {
+        filewatch_poll();
+    }
+
     if (!app->auto_save_enabled) return;
-    
+
     // Check if 3 seconds have passed since last edit
     DWORD now = GetTickCount();
     if (now - app->last_edit_time > 3000) {
@@ -2193,4 +2604,73 @@ bool app_settings_export(App *app, const char *filepath) {
 bool app_settings_import(App *app, const char *filepath) {
     (void)app;
     return settings_import_from_file(filepath, SETTINGS_CATEGORY_ALL);
+}
+
+// ============================================================================
+// Phase 7: Productivity Features
+// ============================================================================
+
+void app_new_from_template(App *app) {
+    Tab *tab = tab_manager_get_active(&app->tab_mgr);
+    if (!tab) return;
+    
+    if (tab->editor.modified) {
+        if (!app_check_unsaved(app)) {
+            return;
+        }
+    }
+    
+    // Get template content - use first template if available
+    if (app->template_mgr.count > 0) {
+        const char *content = app->template_mgr.templates[0].content;
+        buffer_free(&tab->editor.buffer);
+        buffer_init(&tab->editor.buffer, 4096);
+        buffer_insert(&tab->editor.buffer, 0, content, strlen(content));
+        
+        tab->editor.caret = 0;
+        tab->editor.selection.start = 0;
+        tab->editor.selection.end = 0;
+        tab->editor.modified = true;
+        
+        snprintf(tab->filename, sizeof(tab->filename), "Untitled");
+        snprintf(tab->title, sizeof(tab->title), "Untitled - New from Template");
+        
+        tab_manager_update_control(&app->tab_mgr);
+        tab_manager_update_window_title(&app->tab_mgr, app->hwnd);
+        InvalidateRect(tab->hwnd, NULL, TRUE);
+    } else {
+        MessageBoxA(app->hwnd, "No templates available. Please create a template first.", "New From Template", MB_ICONINFORMATION);
+    }
+}
+
+void app_show_notes(App *app) {
+    (void)app;
+    // Notes display - show count
+    char msg[128];
+    snprintf(msg, sizeof(msg), "You have %d notes.", app->notes_mgr.count);
+    MessageBoxA(app->hwnd, msg, "Notes", MB_ICONINFORMATION);
+}
+
+void app_show_clipboard_history(App *app) {
+    (void)app;
+    char info[512] = "Clipboard History:\n\n";
+    char line[128];
+    int count = clipboard_get_count(&app->clipboard_hist);
+    for (int i = 0; i < count && i < 5; i++) {
+        int len = 0;
+        const char *item = clipboard_get_item(&app->clipboard_hist, i, &len);
+        if (item) {
+            snprintf(line, sizeof(line), "%d. %.40s...\n", i + 1, item);
+            strncat(info, line, sizeof(info) - strlen(info) - 1);
+        }
+    }
+    if (count == 0) strcat(info, "(empty)");
+    MessageBoxA(app->hwnd, info, "Clipboard History", MB_ICONINFORMATION);
+}
+
+void app_toggle_task_mode(App *app) {
+    (void)app;
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Task mode enabled. %d pending tasks.", task_get_pending_count(&app->task_mgr));
+    MessageBoxA(app->hwnd, msg, "Task Mode", MB_ICONINFORMATION);
 }

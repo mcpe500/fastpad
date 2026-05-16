@@ -215,6 +215,86 @@ Complete rewrite of selection rendering logic (see BUG-002) with proper segment-
 
 ---
 
+## Bug Fixes Applied (v3.0.0)
+
+### BUG-015: Theme Menu Not Functional
+**File:** `src/app.c`
+**Severity:** HIGH
+
+**Root Cause:** Theme menu was not added to Settings menu. Theme switching handler was missing.
+
+**Fix:** Added theme menu IDs and Theme submenu with all 6 themes. Added theme switching handler with CheckMenuItem() for checkmarks.
+
+---
+
+### BUG-016: Text Rendering Overlapping/Ghosting
+**File:** `src/render.c`
+**Severity:** HIGH
+
+**Root Cause:** In syntax highlighting token rendering, text pointer used modified tok_start instead of original tok->start.
+
+**Fix:** Changed `display_text + text_offset + tok_start` to `display_text + text_offset + tok->start`.
+
+---
+
+### BUG-017: editor_redo Function Missing
+**File:** `src/editor.c`
+**Severity:** HIGH
+
+**Root Cause:** Phase 6 referenced editor_redo() but function was never implemented.
+
+**Fix:** Implemented editor_redo() function similar to editor_undo().
+
+---
+
+### BUG-018: Missing Header Includes for Phase 7 Types
+**File:** `src/types.h`
+**Severity:** HIGH
+
+**Root Cause:** Phase 7 headers not included, App struct couldn't have NotesManager, TemplateManager, etc. members.
+
+**Fix:** Added includes for notes.h, template.h, snippet.h, clipboard.h, taskmode.h.
+
+---
+
+### BUG-019: TreeView_Delete Macro Undeclared
+**File:** `src/explorer.c`
+**Severity:** MEDIUM
+
+**Root Cause:** commctrl.h macros not properly recognized.
+
+**Fix:** Replaced TreeView_Delete() with direct message: SendMessage(tree_view, TVM_DELETEITEM, 0, (LPARAM)item).
+
+---
+
+### BUG-020: Unused Variable Warnings
+**Files:** src/app.c, src/workspace.c, src/explorer.c
+**Severity:** LOW
+
+**Fix:** Removed or commented out unused variables, added (void)var casts.
+
+---
+
+### BUG-021: CoTaskMemFree Undefined Symbol
+**File:** `src/workspace.c`
+**Severity:** MEDIUM
+
+**Root Cause:** OLE32 library not linked.
+
+**Fix:** Added `-lole32` to LIBS in Makefile.
+
+---
+
+### BUG-022: diff.h Incompatible with Current Codebase
+**File:** `src/diff.h`
+**Severity:** MEDIUM
+
+**Root Cause:** diff.h defined types differently than diff.c expected. Circular dependency issues.
+
+**Fix:** Disabled diff.c compilation. Compare Files menu shows "Coming Soon" placeholder.
+
+---
+
 ## Known Issues (Not Yet Fixed)
 
 ### Issue-001: Performance with Large Files
@@ -241,6 +321,17 @@ Buffer tests use AddressSanitizer to catch memory corruption issues that may not
 ---
 
 ## Version History
+
+- **v3.0.0** - Complete Feature Pack (Phases 5-8)
+  - Phase 5: Workspace/Folder mode, sidebar explorer, global search, file operations
+  - Phase 6: Multi-cursor, column selection, bracket highlight, code folding, autocomplete
+  - Phase 7: Notes manager, template system, snippet system, clipboard history, task mode
+  - Phase 8: File watcher, read-only mode, CLI support, portable mode
+  - New modules: workspace.c, explorer.c, globalsearch.c, notes.c, template.c, snippet.c, clipboard.c, taskmode.c, filewatch.c, cli.c
+  - Bug fixes: BUG-015 through BUG-022
+
+- **v2.0.1** - Theme Fix
+  - Bug fix: Theme menu now functional (BUG-015)
 
 - **v2.0.0** - Feature pack release (all phases)
   - Phase 1: Auto save, session restore, recent files, search+, line numbers, unsaved indicator

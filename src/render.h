@@ -38,4 +38,10 @@ bool render_get_show_line_numbers(Editor *editor);
 void render_set_search_highlights(Editor *editor, TextPos *positions, int count);
 void render_clear_search_highlights(Editor *editor);
 
+// Bracket highlighting
+void render_draw_bracket_highlight(Editor *editor, HDC hdc);
+
+// Auto-complete popup
+void render_draw_autocomplete_popup(Editor *editor, HDC hdc);
+
 #endif // RENDER_H

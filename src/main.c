@@ -1,5 +1,6 @@
 #include "app.h"
 #include "log.h"
+#include "cli.h"
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -109,13 +110,32 @@ LONG WINAPI crash_handler(EXCEPTION_POINTERS *ExceptionInfo) {
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
                    LPSTR lpCmdLine, int nCmdShow) {
     (void)hPrevInstance;
-    (void)lpCmdLine;
     (void)nCmdShow;
+    (void)lpCmdLine;
     
     #ifdef DEV_BUILD
     init_logging();
     log_info("Application starting (DEV BUILD)...");
     SetUnhandledExceptionFilter(crash_handler);
+    #endif
+    
+    // Parse CLI arguments
+    CLIArgs cli_args = {0};
+    #if defined(__argc) && defined(__argv)
+    cli_parse_args(__argc, __argv, &cli_args);
+    if (cli_args.help_requested) {
+        cli_print_help(__argv[0]);
+        return 0;
+    }
+    if (cli_args.version_requested) {
+        cli_print_version();
+        return 0;
+    }
+    #endif
+    
+    // Initialize portable mode if enabled
+    #if defined(__argc) && defined(__argv)
+    cli_init_portable_mode(&cli_args);
     #endif
     
     // Initialize app
@@ -133,6 +153,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         #endif
         return 1;
     }
+    
+    // Load files from CLI args
+    #if defined(__argc) && defined(__argv)
+    if (cli_args.file_count > 0) {
+        cli_load_files_to_app(&cli_args, &g_app);
+    }
+    #endif
     
     // Message loop
     MSG msg = {0};
