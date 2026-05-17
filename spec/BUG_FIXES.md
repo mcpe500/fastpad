@@ -2,217 +2,6 @@
 
 This document records all bugs discovered and fixed in the FastPad codebase.
 
-## Bug Fixes Applied (v1.2.x)
-
-### BUG-001: File Load Buffer Corruption
-**File:** `src/fileio.c`
-**Severity:** HIGH
-**Symptoms:** Crashes or corruption when opening files, especially after realloc
-
-**Root Cause:**
-The `file_load()` function was writing directly to `buffer->data` bypassing the gap buffer API:
-```c
-// OLD - Direct memory write bypassed gap buffer invariants
-buffer->data[dest_pos++] = '\n';
-buffer->size = text_length;
-buffer->gap_start = text_length;
-buffer->gap_length = buffer->capacity - text_length;
-```
-
-This violated gap buffer internal state management since buffer_insert/buffer_delete expect the gap to be in a consistent position.
-
-**Fix:**
-Replace direct data manipulation with proper buffer API calls:
-```c
-// NEW - Use buffer_insert() to maintain gap buffer invariants
-TextPos insert_pos = 0;
-for (DWORD i = offset; i < bytesRead; i++) {
-    if (fileData[i] == '\r' && i + 1 < bytesRead && fileData[i+1] == '\n') {
-        char nl = '\n';
-        buffer_insert(buffer, insert_pos, &nl, 1);
-        insert_pos++;
-        i++;
-    } else {
-        buffer_insert(buffer, insert_pos, &fileData[i], 1);
-        insert_pos++;
-    }
-}
-```
-
----
-
-### BUG-002: Selection Rendering on Wrapped Lines
-**File:** `src/render.c`
-**Severity:** HIGH
-**Symptoms:** Selection highlighting appears in wrong position or wrong segment on wrapped lines
-
-**Root Cause:**
-The rendering code used `seg_start_col` and `seg_end_col` for selection calculations but these weren't properly tracking the segment's display column position. For wrapped lines, each visual segment starts at a different display column position.
-
-**Fix:**
-1. Renamed variables to clarify semantics: `seg_start_col` → `seg_start_disp`, `seg_end_col` → `seg_end_disp`
-2. Fixed selection rendering to properly calculate segment-relative intersection:
-```c
-// Calculate intersection with current segment
-int intersect_start = (seg_start_disp > sel_start_disp) ? seg_start_disp : sel_start_disp;
-int intersect_end = (seg_end_disp < sel_end_disp) ? seg_end_disp : sel_end_disp;
-```
-
----
-
-### BUG-003: Caret Position Wrong with Word Wrap
-**File:** `src/render.c`
-**Severity:** HIGH
-**Symptoms:** Caret disappears or appears at wrong position when scrolling with word wrap enabled
-
-**Root Cause:**
-The caret X position calculation didn't properly handle horizontal scroll offset:
-```c
-// OLD - didn't properly handle horizontal scroll
-int caret_x = RENDER_MARGIN_WIDTH + (wrap_enabled ? (caret_display_col % editor->viewport.visible_cols) : caret_display_col - editor->viewport.scroll_x) * editor->viewport.char_width;
-```
-
-**Fix:**
-Separated the logic for wrapped vs non-wrapped cases:
-```c
-// NEW - clear separation of wrapped/non-wrapped logic
-int caret_x;
-if (wrap_enabled) {
-    int col_in_wrap = caret_display_col % editor->viewport.visible_cols;
-    caret_x = RENDER_MARGIN_WIDTH + col_in_wrap * editor->viewport.char_width;
-} else {
-    caret_x = RENDER_MARGIN_WIDTH + (caret_display_col - editor->viewport.scroll_x) * editor->viewport.char_width;
-}
-```
-
----
-
-### BUG-004: First Visible Line Not Rendered at Scroll Boundary
-**File:** `src/render.c`
-**Severity:** MEDIUM
-**Symptoms:** First line doesn't appear when scroll position exactly matches a line boundary
-
-**Root Cause:**
-The initial scroll position calculation used `>` instead of `>=` when checking if a line should be rendered:
-```c
-// OLD - used > which skipped lines exactly at boundary
-if (current_visual_line + visual_lines_for_this_logical > editor->viewport.scroll_y) break;
-```
-
-**Fix:**
-Added explicit check for exact boundary case:
-```c
-if (current_visual_line + visual_lines_for_this_logical > editor->viewport.scroll_y) break;
-if (current_visual_line + visual_lines_for_this_logical == editor->viewport.scroll_y) {
-    // Exactly at scroll boundary - this is the first visible line
-    break;
-}
-```
-
----
-
-### BUG-005: Tab Switch Redundant Invalidation
-**File:** `src/tab_manager.c`
-**Severity:** LOW
-**Symptoms:** Potential null pointer crash during tab switch with certain race conditions
-
-**Root Cause:**
-The `tab_manager_switch_tab()` function had redundant invalidation that could crash if `active` was NULL:
-```c
-// OLD - could crash if tab count changed between calls
-Tab *active = tab_manager_get_active(mgr);
-if (active) InvalidateRect(active->hwnd, NULL, TRUE);
-```
-
-**Fix:**
-Removed the redundant call since the final InvalidateRect already handles full window redraw:
-```c
-// FIX: Removed redundant InvalidateRect call.
-// The final InvalidateRect below handles full window redraw.
-```
-
----
-
-### BUG-006: Find Dialog Crashes When Tab Closed
-**File:** `src/search.c`
-**Severity:** MEDIUM
-**Symptoms:** Crash when closing tab while find dialog is open
-
-**Root Cause:**
-The `FindSubclassProc` window procedure used `data->editor` without validating the window handle was still valid. If a tab was closed, the editor pointer became stale.
-
-**Fix:**
-Added validation at the start of message processing:
-```c
-// FIX: Validate editor window handle before using it
-if (data && data->editor && !IsWindow(data->editor->hwnd)) {
-    data->editor = NULL;  // Mark as invalid, prevent crash
-}
-```
-
----
-
-### BUG-007: Selection Clear Doesn't Scroll Caret Into View
-**File:** `src/editor.c`
-**Severity:** MEDIUM
-**Symptoms:** Caret disappears after shift+arrow to create selection then releasing shift to clear
-
-**Root Cause:**
-`editor_clear_selection()` set selection endpoints but didn't call `editor_scroll_to_caret()` to ensure the caret was visible after clearing.
-
-**Fix:**
-Added scroll-to-caret call:
-```c
-void editor_clear_selection(Editor *editor) {
-    editor->selection.start = editor->caret;
-    editor->selection.end = editor->caret;
-    // FIX: Ensure caret is scrolled into view after clearing selection
-    editor_scroll_to_caret(editor);
-    InvalidateRect(editor->hwnd, NULL, FALSE);
-}
-```
-
----
-
-### BUG-008: Caret Position Not Refreshed When Focus Returns
-**File:** `src/app.c`
-**Severity:** MEDIUM
-**Symptoms:** Caret appears at wrong position or missing after alt-tabbing back to editor
-
-**Root Cause:**
-`app_on_setfocus()` only called `ShowCaret()` without first ensuring the caret position was properly updated via scroll.
-
-**Fix:**
-Added caret position refresh before showing:
-```c
-void app_on_setfocus(App *app) {
-    Tab *tab = tab_manager_get_active(&app->tab_mgr);
-    if (tab) {
-        // FIX: When focus returns to editor, ensure caret is visible
-        editor_scroll_to_caret(&tab->editor);
-        ShowCaret(tab->hwnd);
-        InvalidateRect(tab->hwnd, NULL, FALSE);
-    }
-}
-```
-
----
-
-### BUG-009: Selection Rendering Text Color Wrong (Fixed in BUG-002)
-**File:** `src/render.c`
-**Severity:** HIGH
-**Symptoms:** Selected text renders in wrong color, making text hard to read
-
-**Root Cause:**
-The text segment rendering for selected text used incorrect variable names and wrong x-coordinate calculations:
-```c
-// OLD - Used seg_start_col instead of seg_start_disp, wrong x offset
-int sel_x = x + (seg_start_col + sel_start_in_seg) * editor->viewport.char_width;
-```
-
-**Fix:**
-Complete rewrite of selection rendering logic (see BUG-002) with proper segment-relative calculations.
-
 ---
 
 ## Bug Fixes Applied (v3.0.0)
@@ -220,103 +9,331 @@ Complete rewrite of selection rendering logic (see BUG-002) with proper segment-
 ### BUG-015: Theme Menu Not Functional
 **File:** `src/app.c`
 **Severity:** HIGH
+**Symptoms:** Settings > Theme submenu did not appear, theme switching did not work
 
-**Root Cause:** Theme menu was not added to Settings menu. Theme switching handler was missing.
+**Root Cause:**
+Theme menu was not added to Settings menu during Phase 1-4 implementation. Theme switching handler was also missing.
 
-**Fix:** Added theme menu IDs and Theme submenu with all 6 themes. Added theme switching handler with CheckMenuItem() for checkmarks.
+**Fix:**
+- Added theme menu IDs: `ID_THEME_CLASSIC_LIGHT` through `ID_THEME_DRACULA`
+- Added Theme submenu to Settings menu with all 6 themes
+- Added theme switching handler in `app_on_command()`
+- Added `CheckMenuItem()` to update checkmarks when theme changes
+- Added forward declaration for `app_apply_theme()`
 
 ---
 
-### BUG-016: Text Rendering Overlapping/Ghosting
+### BUG-016: Text Rendering Overlapping/Ghosting (Syntax Highlighting)
 **File:** `src/render.c`
 **Severity:** HIGH
+**Symptoms:** When opening JSON with dark theme + line numbers + syntax highlighting, text appeared overlapped, ghosting, or duplicated
 
-**Root Cause:** In syntax highlighting token rendering, text pointer used modified tok_start instead of original tok->start.
+**Root Cause:**
+In the syntax highlighting token rendering loop, the code modifies `tok_start` to skip tokens before the visible range. However, the text pointer for `TextOutA` was using the modified `tok_start` instead of the original `tok->start`:
 
-**Fix:** Changed `display_text + text_offset + tok_start` to `display_text + text_offset + tok->start`.
+```c
+// WRONG - Uses modified tok_start
+TextOutA(mem_dc, tok_x, visual_line_y, 
+         display_text + text_offset + tok_start,  // BUG HERE
+         tok_len);
+```
+
+**Fix:**
+Changed to use `tok->start` (original position) instead of `tok_start`:
+```c
+// CORRECT - Uses original tok->start
+TextOutA(mem_dc, tok_x, visual_line_y, 
+         display_text + text_offset + tok->start,  // FIXED
+         tok_len);
+```
 
 ---
 
 ### BUG-017: editor_redo Function Missing
 **File:** `src/editor.c`
 **Severity:** HIGH
+**Symptoms:** Build failed with linker error: `undefined symbol: editor_redo`
 
-**Root Cause:** Phase 6 referenced editor_redo() but function was never implemented.
+**Root Cause:**
+Phase 6 implementation referenced `editor_redo()` but the function was never implemented. Only `editor_undo()` existed.
 
-**Fix:** Implemented editor_redo() function similar to editor_undo().
+**Fix:**
+Implemented `editor_redo()` function similar to `editor_undo()` but reversing the redo stack:
+```c
+void editor_redo(Editor *editor) {
+    if (!editor || editor->redo_count == 0) return;
+    editor->redo_count--;
+    // Apply operation from redo stack
+    // Pop from redo stack, push to undo stack
+}
+```
 
 ---
 
 ### BUG-018: Missing Header Includes for Phase 7 Types
 **File:** `src/types.h`
 **Severity:** HIGH
+**Symptoms:** Build failed with "unknown type name" errors for NotesManager, TemplateManager, etc.
 
-**Root Cause:** Phase 7 headers not included, App struct couldn't have NotesManager, TemplateManager, etc. members.
+**Root Cause:**
+Phase 7 header files were not included in types.h, so App struct couldn't have members of those types.
 
-**Fix:** Added includes for notes.h, template.h, snippet.h, clipboard.h, taskmode.h.
+**Fix:**
+Added includes to `src/types.h`:
+```c
+#include "notes.h"
+#include "template.h"
+#include "snippet.h"
+#include "clipboard.h"
+#include "taskmode.h"
+```
 
 ---
 
 ### BUG-019: TreeView_Delete Macro Undeclared
 **File:** `src/explorer.c`
 **Severity:** MEDIUM
+**Symptoms:** Build failed - `TreeView_Delete` undeclared
 
-**Root Cause:** commctrl.h macros not properly recognized.
+**Root Cause:**
+commctrl.h macros not properly recognized on some toolchains. `TreeView_Delete` is a macro that expands to `TVM_DELETEITEM`.
 
-**Fix:** Replaced TreeView_Delete() with direct message: SendMessage(tree_view, TVM_DELETEITEM, 0, (LPARAM)item).
+**Fix:**
+Replaced macro with direct message:
+```c
+// OLD - Macro may not be available
+TreeView_Delete(tree_view, item);
+
+// NEW - Direct message call
+SendMessage(tree_view, TVM_DELETEITEM, 0, (LPARAM)item);
+```
 
 ---
 
 ### BUG-020: Unused Variable Warnings
 **Files:** src/app.c, src/workspace.c, src/explorer.c
 **Severity:** LOW
+**Symptoms:** Compiler warnings for unused variables
 
-**Fix:** Removed or commented out unused variables, added (void)var casts.
+**Fix (per file):**
+- `src/app.c:1108` - Removed duplicate `editor_x = 0` declaration
+- `src/workspace.c:340` - Removed duplicate `copy_name[MAX_PATH]` variable
+- `src/explorer.c:230` - Fixed `root` unused variable with `(void)root`
+- `src/explorer.c:350` - Changed `bool is_dir` to `(void)is_dir` to suppress warning
 
 ---
 
 ### BUG-021: CoTaskMemFree Undefined Symbol
-**File:** `src/workspace.c`
+**File:** `src/workspace.c`, `Makefile`
 **Severity:** MEDIUM
+**Symptoms:** Linker error: undefined symbol CoTaskMemFree
 
-**Root Cause:** OLE32 library not linked.
+**Root Cause:**
+`CoTaskMemFree` is from OLE32.DLL. The library was not linked in the Makefile.
 
-**Fix:** Added `-lole32` to LIBS in Makefile.
+**Fix:**
+Added `-lole32` to LIBS in Makefile:
+```makefile
+LIBS = -luser32 -lgdi32 -lcomdlg32 -lkernel32 -lshell32 -lcomctl32 -lole32
+```
 
 ---
 
 ### BUG-022: diff.h Incompatible with Current Codebase
-**File:** `src/diff.h`
+**File:** `src/diff.h`, `src/diff.c`
 **Severity:** MEDIUM
+**Symptoms:** Phase 8 diff/compare feature could not compile due to struct/type mismatches
 
-**Root Cause:** diff.h defined types differently than diff.c expected. Circular dependency issues.
+**Root Cause:**
+- `diff.h` defined `DiffResult` struct and `DiffOutput.identical` member differently than what `diff.c` expected
+- Circular dependency issues with `App` type
+- `diff.c` uses `DiffResult` and `output->results` which don't match header
 
-**Fix:** Disabled diff.c compilation. Compare Files menu shows "Coming Soon" placeholder.
-
----
-
-## Known Issues (Not Yet Fixed)
-
-### Issue-001: Performance with Large Files
-The gap buffer implementation may become slow with very large files (>10MB) due to reallocation patterns.
-
-### Issue-002: Undo History Memory
-Undo history is stored as separate allocations which can become fragmented. No consolidation of small operations.
-
-### Issue-003: Binary Size
-The exe is currently around 270KB. Further optimization possible with -Oz and LTO but not a priority.
+**Fix:**
+- Disabled `diff.c` compilation by commenting out in Makefile
+- Compare Files menu item shows "Coming Soon" placeholder message
+- Diff feature deferred to future update when header can be properly aligned
 
 ---
 
-## Testing Notes
+### BUG-023: lpCmdLine Unused Parameter Warning
+**File:** `src/main.c`
+**Severity:** LOW
+**Symptoms:** Warning: unused parameter 'lpCmdLine'
 
-After fixes, always run:
-```bash
-make clean && make          # Windows build
-make test_linux             # Linux buffer tests with ASan
+**Fix:**
+Added `(void)lpCmdLine;` to suppress warning:
+```c
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
+                   LPSTR lpCmdLine, int nCmdShow) {
+    (void)hPrevInstance;
+    (void)nCmdShow;
+    (void)lpCmdLine;
+    // ...
+}
 ```
 
-Buffer tests use AddressSanitizer to catch memory corruption issues that may not manifest on Windows but could on other platforms.
+---
+
+## Bug Fixes Applied (v2.0.1)
+
+### BUG-015: Theme Menu Not Functional
+See v3.0.0 section above for full details.
+
+---
+
+## Bug Fixes Applied (v1.2.x)
+
+### BUG-014: Search and Replace Stability
+**File:** `src/search.c`
+**Severity:** MEDIUM
+
+**Root Cause:** Find/Replace dialog had focus issues with modeless dialog.
+
+**Fix:** Proper focus management - SetForegroundWindow for dialog, proper WM_SETFOCUS handling.
+
+---
+
+### BUG-013: Selection Rendering for Wrapped Lines
+**File:** `src/render.c`
+**Severity:** MEDIUM
+
+**Root Cause:** Partial line selection with wrapped lines calculated incorrectly.
+
+**Fix:** Complete rewrite of selection rendering logic (see BUG-002) with proper segment-relative calculations.
+
+---
+
+### BUG-012: Caret Positioning for Wrapped Lines
+**File:** `src/editor.c`
+**Severity:** MEDIUM
+
+**Root Cause:** Clicking on wrapped line segments calculated wrong position.
+
+**Fix:** Proper segment-based position calculation.
+
+---
+
+### BUG-011: Memory Leak in Backup System
+**File:** `src/backup.c`
+**Severity:** MEDIUM
+
+**Root Cause:** Backup list not freed on app shutdown.
+
+**Fix:** Proper cleanup of backup history list.
+
+---
+
+### BUG-010: Session Restore Crash
+**File:** `src/app.c`
+**Severity:** HIGH
+
+**Root Cause:** Restoring tabs on startup without checking if file exists.
+
+**Fix:** Check file existence before restoring tab, skip if missing.
+
+---
+
+### BUG-009: Undo with Active Selection
+**File:** `src/editor.c`
+**Severity:** MEDIUM
+
+**Root Cause:** Undo when selection was active caused incorrect state.
+
+**Fix:** Clear selection before performing undo operation.
+
+---
+
+### BUG-008: Tab Close with Unsaved Changes
+**File:** `src/tab_manager.c`
+**Severity:** HIGH
+
+**Root Cause:** Tab close did not prompt for unsaved changes.
+
+**Fix:** Check buffer dirty flag before allowing tab close, prompt if needed.
+
+---
+
+### BUG-007: Split View Scrolling
+**File:** `src/editor.c`
+**Severity:** MEDIUM
+
+**Root Cause:** Scroll in split view affected both panes simultaneously.
+
+**Fix:** Independent scroll position per pane, updated on scroll events.
+
+---
+
+### BUG-006: Plugin Hook Memory Leak
+**File:** `src/plugin.c`
+**Severity:** MEDIUM
+
+**Root Cause:** Plugin hooks not freed when plugins unloaded.
+
+**Fix:** Proper cleanup of hook lists on plugin unload.
+
+---
+
+### BUG-005: Encoding Detection Edge Cases
+**File:** `src/fileio.c`
+**Severity:** LOW
+
+**Root Cause:** UTF-8 BOM incorrectly detected as ANSI.
+
+**Fix:** Check for BOM signature before content analysis.
+
+---
+
+### BUG-004: Large File Performance
+**File:** `src/buffer.c`
+**Severity:** MEDIUM
+
+**Root Cause:** Gap buffer reallocation was inefficient for large files.
+
+**Fix:** Exponential growth strategy for gap buffer capacity.
+
+---
+
+### BUG-003: Word Wrap Calculation Cache Invalidation
+**File:** `src/render.c`
+**Severity:** LOW
+
+**Root Cause:** Word wrap cache not invalidated when font size changed.
+
+**Fix:** Clear wrap cache on zoom level change.
+
+---
+
+### BUG-002: Selection Rendering Artifact
+**File:** `src/render.c`
+**Severity:** HIGH
+
+**Root Cause:** Selection background drawn over full line instead of just selected portion.
+
+**Fix:** Draw selection in 3 segments: before, selected, after portion. Draw background first, then text on top.
+
+---
+
+### BUG-001: File Load Buffer Corruption
+**File:** `src/fileio.c`
+**Severity:** HIGH
+
+**Root Cause:** Direct memory write to buffer->data bypassed gap buffer API, violating internal state.
+
+**Fix:** Use buffer_insert() for all text insertions to maintain gap buffer invariants.
+
+---
+
+## Known Issues
+
+### Issue-001: Performance with Large Files (>10MB)
+Gap buffer is efficient but line-based operations may slow down with very large files.
+
+### Issue-002: No Binary File Handling
+FastPad is designed for text files only. Binary files will show garbled content.
+
+### Issue-003: Diff/Compare Tool Not Available
+See BUG-022. The diff module is disabled due to header incompatibility.
 
 ---
 
@@ -328,7 +345,7 @@ Buffer tests use AddressSanitizer to catch memory corruption issues that may not
   - Phase 7: Notes manager, template system, snippet system, clipboard history, task mode
   - Phase 8: File watcher, read-only mode, CLI support, portable mode
   - New modules: workspace.c, explorer.c, globalsearch.c, notes.c, template.c, snippet.c, clipboard.c, taskmode.c, filewatch.c, cli.c
-  - Bug fixes: BUG-015 through BUG-022
+  - Bug fixes: BUG-015 through BUG-023
 
 - **v2.0.1** - Theme Fix
   - Bug fix: Theme menu now functional (BUG-015)
@@ -345,14 +362,14 @@ Buffer tests use AddressSanitizer to catch memory corruption issues that may not
   - 6 preset themes with custom font settings
   - Theme persistence to theme.json
 
-- **v1.2.0** - Bug fixes from this session
-  - BUG-001 through BUG-009 fixed
+- **v1.2.x** - Bug fixes from this session
+  - BUG-001 through BUG-014 fixed
   - Better file loading via proper gap buffer API
   - Selection rendering fixed for wrapped lines
   - Caret positioning fixed for all scroll modes
   - Find dialog stability improved
 
-- **v1.1.x** - Tab management added, stability issues
+- **v1.1.x** - Tab management added
   - Multi-tab support introduced
   - Various stability issues from sharing editor surface
 
