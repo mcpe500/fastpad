@@ -657,10 +657,10 @@ void render_paint(Editor *editor, HDC hdc, const RECT *update_rect, int tab_bar_
                                 SetTextColor(mem_dc, color);
                                 SetBkMode(mem_dc, TRANSPARENT);
                                 int tok_x = seg_x + (tok_start - (segment_len - remaining_len)) * editor->viewport.char_width;
-                                // Use tok->start (original) not tok_start (modified) for text pointer
-                                // tok_start is adjusted for scroll position but display_text already has text_offset
+                                // Use tok_start (adjusted segment-relative) not tok->start (original absolute)
+                                // tok_start is adjusted for segment position, so text pointer must match
                                 TextOutA(mem_dc, tok_x, visual_line_y, 
-                                         display_text + text_offset + tok->start, 
+                                         display_text + text_offset + tok_start, 
                                          tok_len);
                             }
                             
