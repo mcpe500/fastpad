@@ -29,21 +29,18 @@ Theme menu was not added to Settings menu during Phase 1-4 implementation. Theme
 **Symptoms:** When opening JSON with dark theme + line numbers + syntax highlighting, text appeared overlapped, ghosting, or duplicated
 
 **Root Cause:**
-In the syntax highlighting token rendering loop, the code modifies `tok_start` to skip tokens before the visible range. However, the text pointer for `TextOutA` was using the modified `tok_start` instead of the original `tok->start`:
+In the syntax highlighting token rendering loop, the code was using inconsistent positions:
+- X position calculation used `tok_start` (segment-relative adjusted value)
+- Text pointer used `tok->start` (original absolute position from token struct)
 
-```c
-// WRONG - Uses modified tok_start
-TextOutA(mem_dc, tok_x, visual_line_y, 
-         display_text + text_offset + tok_start,  // BUG HERE
-         tok_len);
-```
+When tokens were adjusted for scroll position, this mismatch caused text to be drawn at wrong visual positions.
 
 **Fix:**
-Changed to use `tok->start` (original position) instead of `tok_start`:
+Changed to use `tok_start` (segment-relative) for text pointer to match the X position:
 ```c
-// CORRECT - Uses original tok->start
+// CORRECT - Both x position and text pointer use segment-relative tok_start
 TextOutA(mem_dc, tok_x, visual_line_y, 
-         display_text + text_offset + tok->start,  // FIXED
+         display_text + text_offset + tok_start,  // FIXED
          tok_len);
 ```
 
